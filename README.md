@@ -5,13 +5,15 @@
 Get yourself an x86-64 Linux machine with Docker installed.
 Follow the three simple steps below to get Asterinas up and running.
 
-1. Download the latest source code.
+### 1. Download the latest source code.
 
 ```bash
 git clone https://github.com/loaringlyc/asterinas-driver.git
 ```
 
-2. Run a Docker container as the development environment.
+### 2. Run a Docker container as the development environment.
+
+The official method goes as follows:
 
 ```bash
 docker run -it --privileged --network=host --device=/dev/kvm -v $(pwd)/asterinas:/root/asterinas asterinas/asterinas:0.9.4
