@@ -33,7 +33,7 @@ docker load < /path/to/your/file/asterinas-docker.tar
 docker run -it --privileged --network=host --device=/dev/kvm -v $(pwd)/asterinas-driver:/root/asterinas docker.io/asterinas/asterinas
 ```
 
-3. Inside the container, go to the project folder to build and run Asterinas.
+### 3. Inside the container, go to the project folder to build and run Asterinas.
 
 ```bash
 make build
