@@ -23,14 +23,14 @@ However, using this command may lead to some network problems. I highly recommen
 
 ```bash
 sudo podman load < /path/to/your/file/asterinas-docker.tar
-sudo podman run -it --privileged --network=host --device=/dev/kvm -v $(pwd)/asterinas-driver:/root/asterinas docker.io/asterinas/asterinas
+sudo podman run -it --privileged --network=host --device=/dev/kvm -v $(pwd)/asterinas-driver:/root/asterinas docker.io/asterinas/asterinas:0.9.4
 # note that sudo is necessary for podman for --device=/dev/kvm arg
 ``` 
 
 or if you use docker:
 ```bash
 docker load < /path/to/your/file/asterinas-docker.tar
-docker run -it --privileged --network=host --device=/dev/kvm -v $(pwd)/asterinas-driver:/root/asterinas docker.io/asterinas/asterinas
+docker run -it --privileged --network=host --device=/dev/kvm -v $(pwd)/asterinas-driver:/root/asterinas docker.io/asterinas/asterinas:0.9.4
 ```
 
 ### 3. Inside the container, go to the project folder to build and run Asterinas.
