@@ -13,6 +13,7 @@ aster-network = { path = "comps/network" }
 aster-console = { path = "comps/console" }
 aster-framebuffer = { path = "comps/framebuffer" }
 aster-softirq = { path = "comps/softirq" }
+aster-logger = { path = "comps/logger" }
 aster-time = { path = "comps/time" }
 aster-virtio = { path = "comps/virtio" }
 aster-rights = { path = "libs/aster-rights" }
@@ -64,10 +65,6 @@ fixed = "1.28.0"
 
 [target.riscv64gc-unknown-none-elf.dependencies]
 riscv = { version = "0.11.1", features = ["s-mode"] }
-
-[dependencies.lazy_static]
-version = "1.0"
-features = ["spin_no_std"]
 
 [features]
 all = ["cvm_guest"]

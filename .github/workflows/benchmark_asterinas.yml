@@ -80,8 +80,8 @@ jobs:
       fail-fast: false
     timeout-minutes: 60
     container: 
-      image: asterinas/asterinas:0.9.4
-      options: --device=/dev/kvm
+      image: asterinas/asterinas:0.10.1
+      options: --device=/dev/kvm --privileged
     env:
       # Need to set up proxy since the self-hosted CI server is located in China,
       # which has poor network connection to the official Rust crate repositories.

@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use alloc::{boxed::Box, collections::BTreeMap, string::String, sync::Arc, vec, vec::Vec};
+use alloc::{
+    boxed::Box,
+    collections::BTreeMap,
+    string::{String, ToString},
+    sync::Arc,
+    vec,
+    vec::Vec,
+};
 use core::{fmt::Debug, hint::spin_loop, mem::size_of};
 
 use aster_block::{
-    bio::{BioEnqueueError, BioStatus, BioType, SubmittedBio},
+    bio::{bio_segment_pool_init, BioEnqueueError, BioStatus, BioType, SubmittedBio},
     request_queue::{BioRequest, BioRequestSingleQueue},
     BlockDeviceMeta,
 };
-use aster_util::safe_ptr::SafePtr;
 use id_alloc::IdAlloc;
-use log::info;
+use log::{debug, info};
 use ostd::{
-    io_mem::IoMem,
     mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmIo},
     sync::SpinLock,
     trap::TrapFrame,
@@ -26,7 +31,7 @@ use crate::{
         VirtioDeviceError,
     },
     queue::VirtQueue,
-    transport::VirtioTransport,
+    transport::{ConfigManager, VirtioTransport},
 };
 
 #[derive(Debug)]
@@ -39,8 +44,14 @@ pub struct BlockDevice {
 impl BlockDevice {
     /// Creates a new VirtIO-Block driver and registers it.
     pub(crate) fn init(transport: Box<dyn VirtioTransport>) -> Result<(), VirtioDeviceError> {
+        let is_legacy = transport.is_legacy_version();
         let device = DeviceInner::init(transport)?;
-        let device_id = device.request_device_id();
+        let device_id = if is_legacy {
+            // FIXME: legacy device do not support `GetId` request.
+            "legacy_blk".to_string()
+        } else {
+            device.request_device_id()
+        };
 
         let block_device = Arc::new(Self {
             device,
@@ -52,6 +63,8 @@ impl BlockDevice {
         });
 
         aster_block::register_device(device_id, block_device);
+
+        bio_segment_pool_init();
         Ok(())
     }
 
@@ -70,9 +83,9 @@ impl BlockDevice {
 
     /// Negotiate features for the device specified bits 0~23
     pub(crate) fn negotiate_features(features: u64) -> u64 {
-        let feature = BlockFeatures::from_bits(features).unwrap();
-        let support_features = BlockFeatures::from_bits(features).unwrap();
-        (feature & support_features).bits
+        let mut support_features = BlockFeatures::from_bits_truncate(features);
+        support_features.remove(BlockFeatures::MQ);
+        support_features.bits
     }
 }
 
@@ -84,14 +97,14 @@ impl aster_block::BlockDevice for BlockDevice {
     fn metadata(&self) -> BlockDeviceMeta {
         BlockDeviceMeta {
             max_nr_segments_per_bio: self.queue.max_nr_segments_per_bio(),
-            nr_sectors: VirtioBlockConfig::read_capacity_sectors(&self.device.config).unwrap(),
+            nr_sectors: self.device.config_manager.capacity_sectors(),
         }
     }
 }
 
 #[derive(Debug)]
 struct DeviceInner {
-    config: SafePtr<VirtioBlockConfig, IoMem>,
+    config_manager: ConfigManager<VirtioBlockConfig>,
     features: VirtioBlockFeature,
     queue: SpinLock<VirtQueue>,
     transport: SpinLock<Box<dyn VirtioTransport>>,
@@ -106,9 +119,10 @@ impl DeviceInner {
 
     /// Creates and inits the device.
     pub fn init(mut transport: Box<dyn VirtioTransport>) -> Result<Arc<Self>, VirtioDeviceError> {
-        let config = VirtioBlockConfig::new(transport.as_mut());
+        let config_manager = VirtioBlockConfig::new_manager(transport.as_ref());
+        debug!("virio_blk_config = {:?}", config_manager.read_config());
         assert_eq!(
-            VirtioBlockConfig::read_block_size(&config).unwrap(),
+            config_manager.block_size(),
             VirtioBlockConfig::sector_size(),
             "currently not support customized device logical block size"
         );
@@ -138,7 +152,7 @@ impl DeviceInner {
         assert!(Self::QUEUE_SIZE as usize * RESP_SIZE <= block_responses.nbytes());
 
         let device = Arc::new(Self {
-            config,
+            config_manager,
             features,
             queue: SpinLock::new(queue),
             transport: SpinLock::new(transport),
@@ -203,11 +217,14 @@ impl DeviceInner {
             // Synchronize DMA mapping if read from the device
             if let BioType::Read = complete_request.bio_request.type_() {
                 complete_request
-                    .dma_bufs
-                    .iter()
-                    .for_each(|(stream, offset, len)| {
-                        stream.sync(*offset..*offset + *len).unwrap();
-                    });
+                    .bio_request
+                    .bios()
+                    .flat_map(|bio| {
+                        bio.segments()
+                            .iter()
+                            .map(|segment| segment.inner_dma_slice())
+                    })
+                    .for_each(|dma_slice| dma_slice.sync().unwrap());
             }
 
             // Completes the bio request
@@ -289,11 +306,10 @@ impl DeviceInner {
 
     /// Reads data from the device, this function is non-blocking.
     fn read(&self, bio_request: BioRequest) {
-        let dma_streams = Self::dma_stream_map(&bio_request);
-
         let id = self.id_allocator.disable_irq().lock().alloc().unwrap();
         let req_slice = {
-            let req_slice = DmaStreamSlice::new(&self.block_requests, id * REQ_SIZE, REQ_SIZE);
+            let req_slice =
+                DmaStreamSlice::new(self.block_requests.clone(), id * REQ_SIZE, REQ_SIZE);
             let req = BlockReq {
                 type_: ReqType::In as _,
                 reserved: 0,
@@ -305,18 +321,21 @@ impl DeviceInner {
         };
 
         let resp_slice = {
-            let resp_slice = DmaStreamSlice::new(&self.block_responses, id * RESP_SIZE, RESP_SIZE);
+            let resp_slice =
+                DmaStreamSlice::new(self.block_responses.clone(), id * RESP_SIZE, RESP_SIZE);
             resp_slice.write_val(0, &BlockResp::default()).unwrap();
             resp_slice
         };
 
-        let dma_slices: Vec<DmaStreamSlice> = dma_streams
-            .iter()
-            .map(|(stream, offset, len)| DmaStreamSlice::new(stream, *offset, *len))
-            .collect();
         let outputs = {
-            let mut outputs: Vec<&DmaStreamSlice> = Vec::with_capacity(dma_streams.len() + 1);
-            outputs.extend(dma_slices.iter());
+            let mut outputs: Vec<&DmaStreamSlice<_>> =
+                Vec::with_capacity(bio_request.num_segments() + 1);
+            let dma_slices_iter = bio_request.bios().flat_map(|bio| {
+                bio.segments()
+                    .iter()
+                    .map(|segment| segment.inner_dma_slice())
+            });
+            outputs.extend(dma_slices_iter);
             outputs.push(&resp_slice);
             outputs
         };
@@ -340,7 +359,7 @@ impl DeviceInner {
             }
 
             // Records the submitted request
-            let submitted_request = SubmittedRequest::new(id as u16, bio_request, dma_streams);
+            let submitted_request = SubmittedRequest::new(id as u16, bio_request);
             self.submitted_requests
                 .disable_irq()
                 .lock()
@@ -351,11 +370,10 @@ impl DeviceInner {
 
     /// Writes data to the device, this function is non-blocking.
     fn write(&self, bio_request: BioRequest) {
-        let dma_streams = Self::dma_stream_map(&bio_request);
-
         let id = self.id_allocator.disable_irq().lock().alloc().unwrap();
         let req_slice = {
-            let req_slice = DmaStreamSlice::new(&self.block_requests, id * REQ_SIZE, REQ_SIZE);
+            let req_slice =
+                DmaStreamSlice::new(self.block_requests.clone(), id * REQ_SIZE, REQ_SIZE);
             let req = BlockReq {
                 type_: ReqType::Out as _,
                 reserved: 0,
@@ -367,19 +385,22 @@ impl DeviceInner {
         };
 
         let resp_slice = {
-            let resp_slice = DmaStreamSlice::new(&self.block_responses, id * RESP_SIZE, RESP_SIZE);
+            let resp_slice =
+                DmaStreamSlice::new(self.block_responses.clone(), id * RESP_SIZE, RESP_SIZE);
             resp_slice.write_val(0, &BlockResp::default()).unwrap();
             resp_slice
         };
 
-        let dma_slices: Vec<DmaStreamSlice> = dma_streams
-            .iter()
-            .map(|(stream, offset, len)| DmaStreamSlice::new(stream, *offset, *len))
-            .collect();
         let inputs = {
-            let mut inputs: Vec<&DmaStreamSlice> = Vec::with_capacity(dma_streams.len() + 1);
+            let mut inputs: Vec<&DmaStreamSlice<_>> =
+                Vec::with_capacity(bio_request.num_segments() + 1);
             inputs.push(&req_slice);
-            inputs.extend(dma_slices.iter());
+            let dma_slices_iter = bio_request.bios().flat_map(|bio| {
+                bio.segments()
+                    .iter()
+                    .map(|segment| segment.inner_dma_slice())
+            });
+            inputs.extend(dma_slices_iter);
             inputs
         };
 
@@ -401,7 +422,7 @@ impl DeviceInner {
             }
 
             // Records the submitted request
-            let submitted_request = SubmittedRequest::new(id as u16, bio_request, dma_streams);
+            let submitted_request = SubmittedRequest::new(id as u16, bio_request);
             self.submitted_requests
                 .disable_irq()
                 .lock()
@@ -453,34 +474,13 @@ impl DeviceInner {
             }
 
             // Records the submitted request
-            let submitted_request = SubmittedRequest::new(id as u16, bio_request, Vec::new());
+            let submitted_request = SubmittedRequest::new(id as u16, bio_request);
             self.submitted_requests
                 .disable_irq()
                 .lock()
                 .insert(token, submitted_request);
             return;
         }
-    }
-
-    /// Performs DMA mapping for the segments in bio request.
-    fn dma_stream_map(bio_request: &BioRequest) -> Vec<(DmaStream, usize, usize)> {
-        let dma_direction = match bio_request.type_() {
-            BioType::Read => DmaDirection::FromDevice,
-            BioType::Write => DmaDirection::ToDevice,
-            _ => todo!(),
-        };
-
-        bio_request
-            .bios()
-            .flat_map(|bio| {
-                bio.segments().iter().map(|segment| {
-                    let dma_stream =
-                        DmaStream::map(segment.pages().clone().into(), dma_direction, false)
-                            .unwrap();
-                    (dma_stream, segment.offset(), segment.nbytes())
-                })
-            })
-            .collect()
     }
 }
 
@@ -489,16 +489,11 @@ impl DeviceInner {
 struct SubmittedRequest {
     id: u16,
     bio_request: BioRequest,
-    dma_bufs: Vec<(DmaStream, usize, usize)>,
 }
 
 impl SubmittedRequest {
-    pub fn new(id: u16, bio_request: BioRequest, dma_bufs: Vec<(DmaStream, usize, usize)>) -> Self {
-        Self {
-            id,
-            bio_request,
-            dma_bufs,
-        }
+    pub fn new(id: u16, bio_request: BioRequest) -> Self {
+        Self { id, bio_request }
     }
 }
 

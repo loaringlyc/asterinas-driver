@@ -16,6 +16,7 @@ use crate::{
     },
     prelude::*,
     process::{
+        posix_thread::AsPosixThread,
         signal::{PollHandle, Pollable, Pollee},
         JobControl, Terminal,
     },
@@ -48,7 +49,7 @@ impl PtyMaster {
             output: ldisc,
             input: SpinLock::new(RingBuffer::new(BUFFER_CAPACITY)),
             job_control,
-            pollee: Pollee::new(IoEvents::OUT),
+            pollee: Pollee::new(),
             weak_self: weak_ref.clone(),
         })
     }
@@ -64,7 +65,7 @@ impl PtyMaster {
     pub(super) fn slave_push_char(&self, ch: u8) {
         let mut input = self.input.disable_irq().lock();
         input.push_overwrite(ch);
-        self.update_state(&input);
+        self.pollee.notify(IoEvents::IN);
     }
 
     pub(super) fn slave_poll(
@@ -82,7 +83,9 @@ impl PtyMaster {
 
         let poll_out_mask = mask & IoEvents::OUT;
         if !poll_out_mask.is_empty() {
-            let poll_out_status = self.pollee.poll(poll_out_mask, poller);
+            let poll_out_status = self
+                .pollee
+                .poll_with(poll_out_mask, poller, || self.check_io_events());
             poll_status |= poll_out_status;
         }
 
@@ -101,16 +104,18 @@ impl PtyMaster {
         }
 
         let read_len = input.read_fallible(writer)?;
-        self.update_state(&input);
+        self.pollee.invalidate();
 
         Ok(read_len)
     }
 
-    fn update_state(&self, buf: &RingBuffer<u8>) {
-        if buf.is_empty() {
-            self.pollee.del_events(IoEvents::IN)
+    fn check_io_events(&self) -> IoEvents {
+        let input = self.input.disable_irq().lock();
+
+        if !input.is_empty() {
+            IoEvents::IN | IoEvents::OUT
         } else {
-            self.pollee.add_events(IoEvents::IN);
+            IoEvents::OUT
         }
     }
 }
@@ -121,7 +126,11 @@ impl Pollable for PtyMaster {
 
         let poll_in_mask = mask & IoEvents::IN;
         if !poll_in_mask.is_empty() {
-            let poll_in_status = self.pollee.poll(poll_in_mask, poller.as_deref_mut());
+            let poll_in_status = self
+                .pollee
+                .poll_with(poll_in_mask, poller.as_deref_mut(), || {
+                    self.check_io_events()
+                });
             poll_status |= poll_in_status;
         }
 
@@ -157,7 +166,7 @@ impl FileIo for PtyMaster {
             });
         }
 
-        self.update_state(&input);
+        self.pollee.notify(IoEvents::IN);
         Ok(write_len)
     }
 
@@ -183,7 +192,8 @@ impl FileIo for PtyMaster {
                 Ok(0)
             }
             IoctlCmd::TIOCGPTPEER => {
-                let current = current!();
+                let current = current_thread!();
+                let current = current.as_posix_thread().unwrap();
 
                 // TODO: deal with open options
                 let slave = {
@@ -195,7 +205,7 @@ impl FileIo for PtyMaster {
                     let fs_path = FsPath::try_from(slave_name.as_str())?;
 
                     let inode_handle = {
-                        let fs = current.fs().read();
+                        let fs = current.fs().resolver().read();
                         let flags = AccessMode::O_RDWR as u32;
                         let mode = (InodeMode::S_IRUSR | InodeMode::S_IWUSR).bits();
                         fs.open(&fs_path, flags, mode)?

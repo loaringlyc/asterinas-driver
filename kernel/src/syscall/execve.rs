@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use aster_rights::WriteOp;
-use ostd::{cpu::UserContext, user::UserContextApi};
+use ostd::{
+    cpu::{FpuState, RawGeneralRegs, UserContext},
+    user::UserContextApi,
+};
 
 use super::{constants::*, SyscallReturn};
 use crate::{
@@ -59,7 +62,7 @@ fn lookup_executable_file(
     flags: OpenFlags,
     ctx: &Context,
 ) -> Result<Dentry> {
-    let fs_resolver = ctx.process.fs().read();
+    let fs_resolver = ctx.posix_thread.fs().resolver().read();
     let dentry = if flags.contains(OpenFlags::AT_EMPTY_PATH) && filename.is_empty() {
         fs_resolver.lookup_from_fd(dfd)
     } else {
@@ -107,12 +110,13 @@ fn do_execve(
     *posix_thread.clear_child_tid().lock() = 0;
 
     // Ensure that the file descriptors with the close-on-exec flag are closed.
-    let closed_files = process.file_table().lock().close_files_on_exec();
+    // FIXME: This is just wrong if the file table is shared with other processes.
+    let closed_files = posix_thread.file_table().lock().close_files_on_exec();
     drop(closed_files);
 
     debug!("load program to root vmar");
     let (new_executable_path, elf_load_info) = {
-        let fs_resolver = &*process.fs().read();
+        let fs_resolver = &*posix_thread.fs().resolver().read();
         let process_vm = process.vm();
         load_program_to_vm(process_vm, elf_file.clone(), argv, envp, fs_resolver, 1)?
     };
@@ -131,10 +135,14 @@ fn do_execve(
     // set signal disposition to default
     process.sig_dispositions().lock().inherit();
     // set cpu context to default
-    let default_content = UserContext::default();
-    *user_context.general_regs_mut() = *default_content.general_regs();
-    user_context.set_tls_pointer(default_content.tls_pointer());
-    *user_context.fp_regs_mut() = *default_content.fp_regs();
+    *user_context.general_regs_mut() = RawGeneralRegs::default();
+    user_context.set_tls_pointer(0);
+    *user_context.fpu_state_mut() = FpuState::default();
+    // FIXME: how to reset the FPU state correctly? Before returning to the user space,
+    // the kernel will call `handle_pending_signal`, which may update the CPU states so that
+    // when the kernel switches to the user mode, the control of the CPU will be handed over
+    // to the user-registered signal handlers.
+    user_context.fpu_state().restore();
     // set new entry point
     user_context.set_instruction_pointer(elf_load_info.entry_point() as _);
     debug!("entry_point: 0x{:x}", elf_load_info.entry_point());

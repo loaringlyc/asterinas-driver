@@ -3,16 +3,21 @@
 use aster_bigtcp::{
     errors::tcp::ListenError, iface::BindPortConfig, socket::UnboundTcpSocket, wire::IpEndpoint,
 };
+use ostd::sync::WriteIrqDisabled;
 
 use super::connected::ConnectedStream;
-use crate::{events::IoEvents, net::iface::BoundTcpSocket, prelude::*, process::signal::Pollee};
+use crate::{
+    events::IoEvents,
+    net::iface::{BoundTcpSocket, Iface},
+    prelude::*,
+};
 
 pub struct ListenStream {
     backlog: usize,
     /// A bound socket held to ensure the TCP port cannot be released
     bound_socket: BoundTcpSocket,
     /// Backlog sockets listening at the local endpoint
-    backlog_sockets: RwLock<Vec<BacklogSocket>>,
+    backlog_sockets: RwLock<Vec<BacklogSocket>, WriteIrqDisabled>,
 }
 
 impl ListenStream {
@@ -36,7 +41,7 @@ impl ListenStream {
 
     /// Append sockets listening at LocalEndPoint to support backlog
     fn fill_backlog_sockets(&self) -> Result<()> {
-        let mut backlog_sockets = self.backlog_sockets.write_irq_disabled();
+        let mut backlog_sockets = self.backlog_sockets.write();
 
         let backlog = self.backlog;
         let current_backlog_len = backlog_sockets.len();
@@ -54,7 +59,7 @@ impl ListenStream {
     }
 
     pub fn try_accept(&self) -> Result<ConnectedStream> {
-        let mut backlog_sockets = self.backlog_sockets.write_irq_disabled();
+        let mut backlog_sockets = self.backlog_sockets.write();
 
         let index = backlog_sockets
             .iter()
@@ -80,22 +85,21 @@ impl ListenStream {
         self.bound_socket.local_endpoint().unwrap()
     }
 
-    pub(super) fn init_pollee(&self, pollee: &Pollee) {
-        pollee.reset_events();
-        self.update_io_events(pollee);
+    pub fn iface(&self) -> &Arc<Iface> {
+        self.bound_socket.iface()
     }
 
-    pub(super) fn update_io_events(&self, pollee: &Pollee) {
+    pub(super) fn check_io_events(&self) -> IoEvents {
         let backlog_sockets = self.backlog_sockets.read();
 
         let can_accept = backlog_sockets.iter().any(|socket| socket.can_accept());
 
-        // FIXME: If network packets come in simultaneously, the socket state may change in the
-        // middle. This can cause the wrong I/O events to be added or deleted.
+        // If network packets come in simultaneously, the socket state may change in the middle.
+        // However, the current pollee implementation should be able to handle this race condition.
         if can_accept {
-            pollee.add_events(IoEvents::IN);
+            IoEvents::IN
         } else {
-            pollee.del_events(IoEvents::IN);
+            IoEvents::empty()
         }
     }
 }

@@ -29,6 +29,11 @@ const BUFFER_CAPACITY: usize = 4096;
 
 pub type LdiscSignalSender = Arc<dyn Fn(KernelSignal) + Send + Sync + 'static>;
 
+// Lock ordering to prevent deadlock (circular dependencies):
+// 1. `termios`
+// 2. `current_line`
+// 3. `read_buffer`
+// 4. `work_item_para`
 pub struct LineDiscipline {
     /// Current line
     current_line: SpinLock<CurrentLine, LocalIrqDisabled>,
@@ -89,7 +94,8 @@ impl CurrentLine {
 
 impl Pollable for LineDiscipline {
     fn poll(&self, mask: IoEvents, poller: Option<&mut PollHandle>) -> IoEvents {
-        self.pollee.poll(mask, poller)
+        self.pollee
+            .poll_with(mask, poller, || self.check_io_events())
     }
 }
 
@@ -108,7 +114,7 @@ impl LineDiscipline {
                 read_buffer: SpinLock::new(RingBuffer::new(BUFFER_CAPACITY)),
                 termios: SpinLock::new(KernelTermios::default()),
                 winsize: SpinLock::new(WinSize::default()),
-                pollee: Pollee::new(IoEvents::empty()),
+                pollee: Pollee::new(),
                 send_signal,
                 work_item,
                 work_item_para: Arc::new(SpinLock::new(LineDisciplineWorkPara::new())),
@@ -140,7 +146,7 @@ impl LineDiscipline {
         // Raw mode
         if !termios.is_canonical_mode() {
             self.read_buffer.lock().push_overwrite(ch);
-            self.update_readable_state();
+            self.pollee.notify(IoEvents::IN);
             return;
         }
 
@@ -166,6 +172,7 @@ impl LineDiscipline {
             let current_line_chars = current_line.drain();
             for char in current_line_chars {
                 self.read_buffer.lock().push_overwrite(char);
+                self.pollee.notify(IoEvents::IN);
             }
         }
 
@@ -173,8 +180,6 @@ impl LineDiscipline {
             // Printable character
             self.current_line.lock().push_char(ch);
         }
-
-        self.update_readable_state();
     }
 
     fn may_send_signal(&self, termios: &KernelTermios, ch: u8) -> bool {
@@ -198,13 +203,13 @@ impl LineDiscipline {
         true
     }
 
-    pub fn update_readable_state(&self) {
+    fn check_io_events(&self) -> IoEvents {
         let buffer = self.read_buffer.lock();
 
         if !buffer.is_empty() {
-            self.pollee.add_events(IoEvents::IN);
+            IoEvents::IN
         } else {
-            self.pollee.del_events(IoEvents::IN);
+            IoEvents::empty()
         }
     }
 
@@ -265,7 +270,7 @@ impl LineDiscipline {
                 unreachable!()
             }
         };
-        self.update_readable_state();
+        self.pollee.invalidate();
         Ok(read_len)
     }
 
@@ -273,6 +278,7 @@ impl LineDiscipline {
     ///
     /// If no bytes are available, this method returns 0 immediately.
     fn poll_read(&self, dst: &mut [u8]) -> usize {
+        let termios = self.termios.lock();
         let mut buffer = self.read_buffer.lock();
         let len = buffer.len();
         let max_read_len = len.min(dst.len());
@@ -282,7 +288,6 @@ impl LineDiscipline {
         let mut read_len = 0;
         for dst_i in dst.iter_mut().take(max_read_len) {
             if let Some(next_char) = buffer.pop() {
-                let termios = self.termios.lock();
                 if termios.is_canonical_mode() {
                     // canonical mode, read until meet new line
                     if is_line_terminator(next_char, &termios) {
@@ -345,6 +350,7 @@ impl LineDiscipline {
     pub fn drain_input(&self) {
         self.current_line.lock().drain();
         self.read_buffer.lock().clear();
+        self.pollee.invalidate();
     }
 
     pub fn buffer_len(&self) -> usize {

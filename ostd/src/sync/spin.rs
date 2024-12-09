@@ -11,10 +11,7 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use crate::{
-    task::{disable_preempt, DisabledPreemptGuard},
-    trap::{disable_local, DisabledLocalIrqGuard},
-};
+use super::{guard::Guardian, LocalIrqDisabled, PreemptDisabled};
 
 /// A spin lock.
 ///
@@ -23,6 +20,9 @@ use crate::{
 /// The type `G' specifies the guard behavior of the spin lock. While holding the lock,
 /// - if `G` is [`PreemptDisabled`], preemption is disabled;
 /// - if `G` is [`LocalIrqDisabled`], local IRQs are disabled.
+///
+/// The `G` can also be provided by other crates other than ostd,
+/// if it behaves similar like [`PreemptDisabled`] or [`LocalIrqDisabled`].
 ///
 /// The guard behavior can be temporarily upgraded from [`PreemptDisabled`] to
 /// [`LocalIrqDisabled`] using the [`disable_irq`] method.
@@ -41,44 +41,7 @@ struct SpinLockInner<T: ?Sized> {
     val: UnsafeCell<T>,
 }
 
-/// A guardian that denotes the guard behavior for holding the spin lock.
-pub trait Guardian {
-    /// The guard type.
-    type Guard;
-
-    /// Creates a new guard.
-    fn guard() -> Self::Guard;
-}
-
-/// A guardian that disables preemption while holding the spin lock.
-pub struct PreemptDisabled;
-
-impl Guardian for PreemptDisabled {
-    type Guard = DisabledPreemptGuard;
-
-    fn guard() -> Self::Guard {
-        disable_preempt()
-    }
-}
-
-/// A guardian that disables IRQs while holding the spin lock.
-///
-/// This guardian would incur a certain time overhead over
-/// [`PreemptDisabled']. So prefer avoiding using this guardian when
-/// IRQ handlers are allowed to get executed while holding the
-/// lock. For example, if a lock is never used in the interrupt
-/// context, then it is ok not to use this guardian in the process context.
-pub struct LocalIrqDisabled;
-
-impl Guardian for LocalIrqDisabled {
-    type Guard = DisabledLocalIrqGuard;
-
-    fn guard() -> Self::Guard {
-        disable_local()
-    }
-}
-
-impl<T, G: Guardian> SpinLock<T, G> {
+impl<T, G> SpinLock<T, G> {
     /// Creates a new spin lock.
     pub const fn new(val: T) -> Self {
         let lock_inner = SpinLockInner {

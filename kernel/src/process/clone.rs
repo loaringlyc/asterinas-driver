@@ -18,7 +18,7 @@ use super::{
 use crate::{
     cpu::LinuxAbi,
     current_userspace,
-    fs::{file_table::FileTable, fs_resolver::FsResolver, utils::FileCreationMask},
+    fs::{file_table::FileTable, thread_info::ThreadFsInfo},
     prelude::*,
     process::posix_thread::allocate_posix_tid,
     thread::{AsThread, Tid},
@@ -202,6 +202,17 @@ fn clone_child_task(
     parent_context: &UserContext,
     clone_args: CloneArgs,
 ) -> Result<Arc<Task>> {
+    let clone_flags = clone_args.flags;
+
+    // This combination is not valid, according to the Linux man pages. See
+    // <https://www.man7.org/linux/man-pages/man2/clone.2.html>.
+    if !clone_flags.contains(CloneFlags::CLONE_VM | CloneFlags::CLONE_SIGHAND) {
+        return_errno_with_message!(
+            Errno::EINVAL,
+            "`CLONE_THREAD` without `CLONE_VM` and `CLONE_SIGHAND` is not valid"
+        );
+    }
+
     let Context {
         process,
         posix_thread,
@@ -209,12 +220,16 @@ fn clone_child_task(
         task: _,
     } = ctx;
 
-    let clone_flags = clone_args.flags;
-    debug_assert!(clone_flags.contains(CloneFlags::CLONE_VM));
-    debug_assert!(clone_flags.contains(CloneFlags::CLONE_FILES));
-    debug_assert!(clone_flags.contains(CloneFlags::CLONE_SIGHAND));
-    let child_root_vmar = process.root_vmar();
+    // clone system V semaphore
+    clone_sysvsem(clone_flags)?;
 
+    // clone file table
+    let child_file_table = clone_files(posix_thread.file_table(), clone_flags);
+
+    // clone fs
+    let child_fs = clone_fs(posix_thread.fs(), clone_flags);
+
+    let child_root_vmar = process.root_vmar();
     let child_user_space = {
         let child_vm_space = child_root_vmar.vm_space().clone();
         let child_cpu_context = clone_cpu_context(
@@ -226,7 +241,6 @@ fn clone_child_task(
         );
         Arc::new(UserSpace::new(child_vm_space, child_cpu_context))
     };
-    clone_sysvsem(clone_flags)?;
 
     // Inherit sigmask from current thread
     let sig_mask = posix_thread.sig_mask().load(Ordering::Relaxed).into();
@@ -240,7 +254,9 @@ fn clone_child_task(
 
         let thread_builder = PosixThreadBuilder::new(child_tid, child_user_space, credentials)
             .process(posix_thread.weak_process())
-            .sig_mask(sig_mask);
+            .sig_mask(sig_mask)
+            .file_table(child_file_table)
+            .fs(child_fs);
         thread_builder.build()
     };
 
@@ -290,16 +306,10 @@ fn clone_child_process(
     };
 
     // clone file table
-    let child_file_table = clone_files(process.file_table(), clone_flags);
+    let child_file_table = clone_files(posix_thread.file_table(), clone_flags);
 
     // clone fs
-    let child_fs = clone_fs(process.fs(), clone_flags);
-
-    // clone umask
-    let child_umask = {
-        let parent_umask = process.umask().read().get();
-        Arc::new(RwLock::new(FileCreationMask::new(parent_umask)))
-    };
+    let child_fs = clone_fs(posix_thread.fs(), clone_flags);
 
     // clone sig dispositions
     let child_sig_dispositions = clone_sighand(process.sig_dispositions(), clone_flags);
@@ -328,6 +338,8 @@ fn clone_child_process(
             PosixThreadBuilder::new(child_tid, child_user_space, credentials)
                 .thread_name(Some(child_thread_name))
                 .sig_mask(child_sig_mask)
+                .file_table(child_file_table)
+                .fs(child_fs)
         };
 
         let mut process_builder =
@@ -336,9 +348,6 @@ fn clone_child_process(
         process_builder
             .main_thread_builder(child_thread_builder)
             .process_vm(child_process_vm)
-            .file_table(child_file_table)
-            .fs(child_fs)
-            .umask(child_umask)
             .sig_dispositions(child_sig_dispositions)
             .nice(child_nice);
 
@@ -414,7 +423,7 @@ fn clone_cpu_context(
     tls: u64,
     clone_flags: CloneFlags,
 ) -> UserContext {
-    let mut child_context = *parent_context;
+    let mut child_context = parent_context.clone();
     // The return value of child thread is zero
     child_context.set_syscall_ret(0);
 
@@ -436,17 +445,18 @@ fn clone_cpu_context(
         child_context.set_tls_pointer(tls as usize);
     }
 
+    // New threads inherit the FPU state of the parent thread and
+    // the state is private to the thread thereafter.
+    child_context.fpu_state().save();
+
     child_context
 }
 
-fn clone_fs(
-    parent_fs: &Arc<RwMutex<FsResolver>>,
-    clone_flags: CloneFlags,
-) -> Arc<RwMutex<FsResolver>> {
+fn clone_fs(parent_fs: &Arc<ThreadFsInfo>, clone_flags: CloneFlags) -> Arc<ThreadFsInfo> {
     if clone_flags.contains(CloneFlags::CLONE_FS) {
         parent_fs.clone()
     } else {
-        Arc::new(RwMutex::new(parent_fs.read().clone()))
+        Arc::new(parent_fs.as_ref().clone())
     }
 }
 

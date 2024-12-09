@@ -2,7 +2,7 @@
 
 use core::sync::atomic::Ordering;
 
-use ostd::sync::{RwLockReadGuard, RwLockWriteGuard};
+use ostd::sync::{PreemptDisabled, RwLockReadGuard, RwLockWriteGuard};
 
 use super::{group::AtomicGid, user::AtomicUid, Gid, Uid};
 use crate::{
@@ -97,8 +97,10 @@ impl Credentials_ {
             self.ruid.store(uid, Ordering::Relaxed);
             self.euid.store(uid, Ordering::Relaxed);
             self.suid.store(uid, Ordering::Relaxed);
+            self.fsuid.store(uid, Ordering::Relaxed);
         } else {
             self.euid.store(uid, Ordering::Relaxed);
+            self.fsuid.store(uid, Ordering::Relaxed);
         }
     }
 
@@ -254,8 +256,10 @@ impl Credentials_ {
             self.rgid.store(gid, Ordering::Relaxed);
             self.egid.store(gid, Ordering::Relaxed);
             self.sgid.store(gid, Ordering::Relaxed);
+            self.fsgid.store(gid, Ordering::Relaxed);
         } else {
             self.egid.store(gid, Ordering::Relaxed);
+            self.fsgid.store(gid, Ordering::Relaxed);
         }
     }
 
@@ -387,11 +391,11 @@ impl Credentials_ {
 
     //  ******* Supplementary groups methods *******
 
-    pub(super) fn groups(&self) -> RwLockReadGuard<BTreeSet<Gid>> {
+    pub(super) fn groups(&self) -> RwLockReadGuard<BTreeSet<Gid>, PreemptDisabled> {
         self.supplementary_gids.read()
     }
 
-    pub(super) fn groups_mut(&self) -> RwLockWriteGuard<BTreeSet<Gid>> {
+    pub(super) fn groups_mut(&self) -> RwLockWriteGuard<BTreeSet<Gid>, PreemptDisabled> {
         self.supplementary_gids.write()
     }
 

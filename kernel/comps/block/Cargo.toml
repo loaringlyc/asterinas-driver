@@ -11,13 +11,11 @@ spin = "0.9.4"
 ostd = { path = "../../../ostd" }
 align_ext = { path = "../../../ostd/libs/align_ext" }
 aster-util = { path = "../../libs/aster-util" }
+aster-logger = { path = "../logger" }
 int-to-c-enum = { path = "../../libs/int-to-c-enum" }
 component = { path = "../../libs/comp-sys/component" }
 log = "0.4"
 static_assertions = "1.1.0"
+bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
 
 [features]
-
-[dependencies.lazy_static]
-version = "1.0"
-features = ["spin_no_std"]

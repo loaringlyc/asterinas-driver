@@ -16,7 +16,7 @@ git clone https://github.com/loaringlyc/asterinas-driver.git
 The official method goes as follows:
 
 ```bash
-docker run -it --privileged --network=host --device=/dev/kvm -v $(pwd)/asterinas:/root/asterinas asterinas/asterinas:0.9.4
+docker run -it --privileged --network=host --device=/dev/kvm -v $(pwd)/asterinas:/root/asterinas asterinas/asterinas:0.10.1
 ```
 
 However, using this command may lead to some network problems. I highly recommend you to download the `asterinas-docker.tar.xz` file, unpack it into `asterinas-docker.tar` file, and then run the following command:
