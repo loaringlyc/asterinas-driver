@@ -5,11 +5,11 @@ use log::debug;
 use ostd::sync::SpinLock;
 
 use crate::{
-    config::{SoundFeatures, VirtioSoundConfig},
     queue::VirtQueue,
     transport::{ConfigManager, VirtioTransport},
     VirtioDeviceError,
 };
+use config::{SoundFeatures, VirtioSoundConfig};
 
 pub struct SoundDevice {
     config_manager: ConfigManager<VirtioSoundConfig>,
