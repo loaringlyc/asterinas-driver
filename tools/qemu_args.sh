@@ -80,9 +80,7 @@ QEMU_ARGS="\
     -device virtio-net-pci,netdev=net01,disable-legacy=on,disable-modern=off,mrg_rxbuf=off,ctrl_rx=off,ctrl_rx_extra=off,ctrl_vlan=off,ctrl_vq=off,ctrl_guest_offloads=off,ctrl_mac_addr=off,event_idx=off,queue_reset=off,guest_announce=off,indirect_desc=off$IOMMU_DEV_EXTRA \
     -device virtio-serial-pci,disable-legacy=on,disable-modern=off$IOMMU_DEV_EXTRA \
     -device virtconsole,chardev=mux \
-    -device virtio-rng \
-    -device virtio-sound-pci,audiodev=my_audiodev \
-    -audiodev alsa,id=my_audiodev \
+    -device virtio-sound-pci,audiodev=my_audiodev -audiodev dbus,id=my_audiodev \
     $IOMMU_EXTRA_ARGS \
 "
 

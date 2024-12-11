@@ -1,15 +1,15 @@
-// SPDX-License-Identifier: MPL-2.0
-
 use alloc::{boxed::Box, sync::Arc};
 use log::debug;
-use ostd::sync::SpinLock;
+use ostd::{early_println, sync::SpinLock};
 
 use crate::{
-    queue::VirtQueue,
-    transport::{ConfigManager, VirtioTransport},
-    VirtioDeviceError,
+    device::VirtioDeviceError, 
+    queue::VirtQueue, 
+    transport::{ConfigManager, VirtioTransport}
 };
 use config::{SoundFeatures, VirtioSoundConfig};
+
+use super::config;
 
 pub struct SoundDevice {
     config_manager: ConfigManager<VirtioSoundConfig>,
@@ -68,6 +68,8 @@ impl SoundDevice {
             let mut transport = device.transport.lock();
             transport.finish_init();
         }
+
+        early_println!("Load virtio-sound successfully. Config = {:?}", sound_config);
 
         Ok(())
     }

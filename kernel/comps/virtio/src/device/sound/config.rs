@@ -1,15 +1,11 @@
-// SPDX-License-Identifier: MPL-2.0
-
-use core::mem::offset_of;
-
 use aster_util::safe_ptr::SafePtr;
 use ostd::Pod;
-
+use core::mem::offset_of;
 use crate::transport::{ConfigManager, VirtioTransport};
-
 bitflags::bitflags! {
     pub struct SoundFeatures: u64 {
-        const VIRTIO_SND_F_CTLS = 1 << 0; //Device supports control elements.
+        //Device supports control elements.
+        const VIRTIO_SND_F_CTLS = 1 << 0; 
     }
 }
 
@@ -35,19 +31,15 @@ impl VirtioSoundConfig {
 impl ConfigManager<VirtioSoundConfig> {
     pub(super) fn read_config(&self, ctls_negotiated: bool) -> VirtioSoundConfig {
         let mut sound_config = VirtioSoundConfig::new_uninit();
-
         sound_config.jacks = self
             .read_once::<u32>(offset_of!(VirtioSoundConfig, jacks))
             .unwrap_or(0);
-
         sound_config.streams = self
             .read_once::<u32>(offset_of!(VirtioSoundConfig, streams))
             .unwrap_or(0);
-
         sound_config.chmaps = self
             .read_once::<u32>(offset_of!(VirtioSoundConfig, chmaps))
             .unwrap_or(0);
-
         if ctls_negotiated {
             sound_config.controls = self
                 .read_once::<u32>(offset_of!(VirtioSoundConfig, controls))
@@ -55,7 +47,6 @@ impl ConfigManager<VirtioSoundConfig> {
         } else {
             sound_config.controls = 0;
         }
-
         sound_config
     }
 }

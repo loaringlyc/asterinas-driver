@@ -16,7 +16,13 @@ use core::hint::spin_loop;
 use bitflags::bitflags;
 use component::{init_component, ComponentInitError};
 use device::{
-    block::device::BlockDevice, sound::device::SoundDevice, console::device::ConsoleDevice, entropy::{self, EntropyDevice}, input::device::InputDevice, network::device::NetworkDevice, socket::{self, device::SocketDevice}, VirtioDeviceType
+    block::device::BlockDevice,
+    console::device::ConsoleDevice,
+    input::device::InputDevice,
+    network::device::NetworkDevice,
+    socket::{self, device::SocketDevice},
+    sound::device::SoundDevice,
+    VirtioDeviceType,
 };
 use log::{error, warn};
 use transport::{mmio::VIRTIO_MMIO_DRIVER, pci::VIRTIO_PCI_DRIVER, DeviceStatus};
