@@ -33,7 +33,7 @@
 use ostd::{
     arch::qemu::{exit_qemu, QemuExitCode},
     boot,
-    cpu::PinCurrentCpu,
+    cpu::{CpuId, CpuSet, PinCurrentCpu},
 };
 use process::Process;
 
@@ -81,8 +81,11 @@ pub fn main() {
     ostd::boot::smp::register_ap_entry(ap_init);
 
     // Spawn the first kernel thread on BSP.
+    let mut affinity = CpuSet::new_empty();
+    affinity.add(CpuId::bsp());
     ThreadOptions::new(init_thread)
         .priority(Priority::idle())
+        .cpu_affinity(affinity)
         .spawn();
 }
 
@@ -147,14 +150,14 @@ fn init_thread() {
     )
     .expect("Run init process failed.");
     // Wait till initproc become zombie.
-    while !initproc.is_zombie() {
+    while !initproc.status().is_zombie() {
         // We don't have preemptive scheduler now.
         // The long running init thread should yield its own execution to allow other tasks to go on.
         Thread::yield_now();
     }
 
     // TODO: exit via qemu isa debug device should not be the only way.
-    let exit_code = if initproc.exit_code() == 0 {
+    let exit_code = if initproc.status().exit_code() == 0 {
         QemuExitCode::Success
     } else {
         QemuExitCode::Failed

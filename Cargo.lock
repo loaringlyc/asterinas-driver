@@ -74,6 +74,8 @@ dependencies = [
  "keyable-arc",
  "ostd",
  "smoltcp",
+ "spin 0.9.8",
+ "takeable",
 ]
 
 [[package]]
@@ -81,7 +83,6 @@ name = "aster-block"
 version = "0.1.0"
 dependencies = [
  "align_ext",
- "aster-logger",
  "aster-util",
  "bitflags 1.3.2",
  "bitvec",
@@ -122,7 +123,6 @@ name = "aster-input"
 version = "0.1.0"
 dependencies = [
  "ascii",
- "aster-logger",
  "aster-rights",
  "aster-util",
  "bitflags 1.3.2",
@@ -138,6 +138,7 @@ name = "aster-logger"
 version = "0.1.0"
 dependencies = [
  "aster-console",
+ "aster-virtio",
  "cfg-if",
  "component",
  "log",
@@ -152,7 +153,6 @@ version = "0.1.0"
 dependencies = [
  "align_ext",
  "aster-bigtcp",
- "aster-logger",
  "aster-rights",
  "aster-util",
  "bitflags 1.3.2",
@@ -281,7 +281,6 @@ dependencies = [
  "aster-block",
  "aster-console",
  "aster-input",
- "aster-logger",
  "aster-network",
  "aster-rights",
  "aster-util",
@@ -916,11 +915,11 @@ dependencies = [
 
 [[package]]
 name = "linux-boot-params"
-version = "0.10.1"
+version = "0.11.0"
 
 [[package]]
 name = "linux-bzimage-builder"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "bitflags 1.3.2",
  "bytemuck",
@@ -931,7 +930,7 @@ dependencies = [
 
 [[package]]
 name = "linux-bzimage-setup"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "bitflags 2.6.0",
  "cfg-if",
@@ -939,6 +938,7 @@ dependencies = [
  "libflate",
  "linux-boot-params",
  "log",
+ "tdx-guest",
  "uart_16550",
  "uefi",
  "uefi-raw",
@@ -1139,7 +1139,7 @@ checksum = "dd8b5dd2ae5ed71462c540258bedcb51965123ad7e7ccf4b9a8cafaa4a63576d"
 
 [[package]]
 name = "osdk-test-kernel"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "ostd",
  "owo-colors 4.0.0",
@@ -1147,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "ostd"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "acpi",
  "align_ext",
@@ -1189,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "ostd-macros"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1217,7 +1217,7 @@ dependencies = [
 
 [[package]]
 name = "ostd-test"
-version = "0.10.1"
+version = "0.11.0"
 
 [[package]]
 name = "owo-colors"
@@ -1532,13 +1532,12 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tdx-guest"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d08fda76b8a438b7d926a92217a709ba39ef9031b8544a9a3f3af08d1b3f87e9"
+checksum = "944d4a19d6093a6f5f7bbd38ab73cc3dc11b0d17387345fc952224878caa7e7f"
 dependencies = [
  "bitflags 1.3.2",
  "iced-x86",
- "lazy_static",
  "raw-cpuid",
  "x86_64 0.14.13",
 ]

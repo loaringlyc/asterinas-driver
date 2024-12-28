@@ -15,8 +15,10 @@
 #![feature(linkage)]
 #![feature(min_specialization)]
 #![feature(negative_impls)]
+#![feature(ptr_metadata)]
 #![feature(ptr_sub_ptr)]
 #![feature(sync_unsafe_cell)]
+#![feature(trait_upcasting)]
 // The `generic_const_exprs` feature is incomplete however required for the page table
 // const generic implementation. We are using this feature in a conservative manner.
 #![allow(incomplete_features)]
@@ -82,7 +84,7 @@ unsafe fn init() {
     boot::init();
     logger::init();
 
-    mm::page::allocator::init();
+    mm::frame::allocator::init();
     mm::kspace::init_kernel_page_table(mm::init_page_meta());
     mm::dma::init();
 

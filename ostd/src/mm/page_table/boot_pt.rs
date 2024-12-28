@@ -16,8 +16,8 @@ use crate::{
     cpu::num_cpus,
     cpu_local_cell,
     mm::{
-        nr_subpage_per_huge, paddr_to_vaddr, page::allocator::PAGE_ALLOCATOR, PageProperty,
-        PagingConstsTrait, Vaddr, PAGE_SIZE,
+        frame::allocator::FRAME_ALLOCATOR, nr_subpage_per_huge, paddr_to_vaddr, Paddr,
+        PageProperty, PagingConstsTrait, Vaddr, PAGE_SIZE,
     },
     sync::SpinLock,
 };
@@ -32,9 +32,9 @@ type FrameNumber = usize;
 ///
 /// The boot page table will be dropped when there's no CPU activating it.
 /// This function will return an [`Err`] if the boot page table is dropped.
-pub(crate) fn with_borrow<F>(f: F) -> Result<(), ()>
+pub(crate) fn with_borrow<F, R>(f: F) -> Result<R, ()>
 where
-    F: FnOnce(&mut BootPageTable),
+    F: FnOnce(&mut BootPageTable) -> R,
 {
     let mut boot_pt = BOOT_PAGE_TABLE.lock();
 
@@ -48,9 +48,9 @@ where
         *boot_pt = Some(unsafe { BootPageTable::from_current_pt() });
     }
 
-    f(boot_pt.as_mut().unwrap());
+    let r = f(boot_pt.as_mut().unwrap());
 
-    Ok(())
+    Ok(r)
 }
 
 /// Dismiss the boot page table.
@@ -113,6 +113,11 @@ impl<E: PageTableEntryTrait, C: PagingConstsTrait> BootPageTable<E, C> {
             frames: Vec::new(),
             _pretend_to_use: core::marker::PhantomData,
         }
+    }
+
+    /// Returns the root physical address of the boot page table.
+    pub(crate) fn root_address(&self) -> Paddr {
+        self.root_pt * C::BASE_PAGE_SIZE
     }
 
     /// Maps a base page to a frame.
@@ -216,7 +221,7 @@ impl<E: PageTableEntryTrait, C: PagingConstsTrait> BootPageTable<E, C> {
     }
 
     fn alloc_frame(&mut self) -> FrameNumber {
-        let frame = PAGE_ALLOCATOR.get().unwrap().lock().alloc(1).unwrap();
+        let frame = FRAME_ALLOCATOR.get().unwrap().lock().alloc(1).unwrap();
         self.frames.push(frame);
         // Zero it out.
         let vaddr = paddr_to_vaddr(frame * PAGE_SIZE) as *mut u8;
@@ -228,7 +233,7 @@ impl<E: PageTableEntryTrait, C: PagingConstsTrait> BootPageTable<E, C> {
 impl<E: PageTableEntryTrait, C: PagingConstsTrait> Drop for BootPageTable<E, C> {
     fn drop(&mut self) {
         for frame in &self.frames {
-            PAGE_ALLOCATOR.get().unwrap().lock().dealloc(*frame, 1);
+            FRAME_ALLOCATOR.get().unwrap().lock().dealloc(*frame, 1);
         }
     }
 }
@@ -245,7 +250,7 @@ fn test_boot_pt_map_protect() {
         mm::{CachePolicy, FrameAllocOptions, PageFlags},
     };
 
-    let root_frame = FrameAllocOptions::new(1).alloc_single().unwrap();
+    let root_frame = FrameAllocOptions::new().alloc_frame().unwrap();
     let root_paddr = root_frame.start_paddr();
 
     let mut boot_pt = BootPageTable::<PageTableEntry, PagingConsts> {
