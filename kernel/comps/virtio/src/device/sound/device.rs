@@ -1,15 +1,15 @@
 use alloc::{boxed::Box, sync::Arc};
+
+use config::{SoundFeatures, VirtioSoundConfig};
 use log::debug;
 use ostd::{early_println, sync::SpinLock};
 
-use crate::{
-    device::VirtioDeviceError, 
-    queue::VirtQueue, 
-    transport::{ConfigManager, VirtioTransport}
-};
-use config::{SoundFeatures, VirtioSoundConfig};
-
 use super::config;
+use crate::{
+    device::VirtioDeviceError,
+    queue::VirtQueue,
+    transport::{ConfigManager, VirtioTransport},
+};
 
 pub struct SoundDevice {
     config_manager: ConfigManager<VirtioSoundConfig>,
@@ -28,31 +28,40 @@ pub struct SoundDevice {
 impl SoundDevice {
     pub fn negotiate_features(features: u64) -> u64 {
         let features = SoundFeatures::from_bits_truncate(features);
-        // 
+        //
         features.bits()
     }
 
     pub fn init(mut transport: Box<dyn VirtioTransport>) -> Result<(), VirtioDeviceError> {
-        let offered_features = transport.read_device_features();
-        let negotiated_features = Self::negotiate_features(offered_features);
+        // let offered_features = transport.read_device_features();
+        // let negotiated_features = Self::negotiate_features(offered_features);
         // transport.ack_features(negotiated_features);
 
-        let ctls_negotiated = (negotiated_features & SoundFeatures::VIRTIO_SND_F_CTLS.bits()) != 0;
+        // if add ctls_negotiated, the number of control would be 0?
+        // negotiate part is done in virtio_component_init() in src/lib.rs together
+        // let ctls_negotiated = (negotiated_features & SoundFeatures::VIRTIO_SND_F_CTLS.bits()) != 0;
 
         let config_manager = VirtioSoundConfig::new_manager(transport.as_ref());
-        let sound_config = config_manager.read_config(ctls_negotiated);
+        let sound_config = config_manager.read_config();
 
         debug!("virtio_sound_config = {:?}", sound_config);
+        early_println!(
+            "Load virtio-sound successfully. Config = {:?}",
+            sound_config
+        );
 
         const CONTROLQ_INDEX: u16 = 0;
         const EVENTQ_INDEX: u16 = 1;
         const TXQ_INDEX: u16 = 2;
         const RXQ_INDEX: u16 = 3;
-
-        let control_queue = SpinLock::new(VirtQueue::new(CONTROLQ_INDEX, 2, transport.as_mut())?);
-        let event_queue = SpinLock::new(VirtQueue::new(EVENTQ_INDEX, 2, transport.as_mut())?);
-        let tx_queue = SpinLock::new(VirtQueue::new(TXQ_INDEX, 2, transport.as_mut())?);
-        let rx_queue = SpinLock::new(VirtQueue::new(RXQ_INDEX, 2, transport.as_mut())?);
+        let control_queue = 
+            SpinLock::new(VirtQueue::new(CONTROLQ_INDEX, 2, transport.as_mut())?);
+        let event_queue = 
+            SpinLock::new(VirtQueue::new(EVENTQ_INDEX, 2, transport.as_mut())?);
+        let tx_queue = 
+            SpinLock::new(VirtQueue::new(TXQ_INDEX, 2, transport.as_mut())?);
+        let rx_queue = 
+            SpinLock::new(VirtQueue::new(RXQ_INDEX, 2, transport.as_mut())?);
 
         let device = Arc::new(SoundDevice {
             config_manager,
@@ -63,15 +72,14 @@ impl SoundDevice {
             rx_queue,
         });
 
+        // Register irq callbacks
+        let mut transport = device.transport.disable_irq().lock();
+        
 
-        {
-            let mut transport = device.transport.lock();
-            transport.finish_init();
-        }
-
-        early_println!("Load virtio-sound successfully. Config = {:?}", sound_config);
+        transport.finish_init();
+        drop(transport);
+        
 
         Ok(())
     }
-
 }

@@ -1,11 +1,13 @@
+use core::mem::offset_of;
+
 use aster_util::safe_ptr::SafePtr;
 use ostd::Pod;
-use core::mem::offset_of;
+
 use crate::transport::{ConfigManager, VirtioTransport};
 bitflags::bitflags! {
     pub struct SoundFeatures: u64 {
         //Device supports control elements.
-        const VIRTIO_SND_F_CTLS = 1 << 0; 
+        const VIRTIO_SND_F_CTLS = 1 << 0;
     }
 }
 
@@ -29,7 +31,7 @@ impl VirtioSoundConfig {
 }
 
 impl ConfigManager<VirtioSoundConfig> {
-    pub(super) fn read_config(&self, ctls_negotiated: bool) -> VirtioSoundConfig {
+    pub(super) fn read_config(&self) -> VirtioSoundConfig {
         let mut sound_config = VirtioSoundConfig::new_uninit();
         sound_config.jacks = self
             .read_once::<u32>(offset_of!(VirtioSoundConfig, jacks))
@@ -40,13 +42,13 @@ impl ConfigManager<VirtioSoundConfig> {
         sound_config.chmaps = self
             .read_once::<u32>(offset_of!(VirtioSoundConfig, chmaps))
             .unwrap_or(0);
-        if ctls_negotiated {
-            sound_config.controls = self
-                .read_once::<u32>(offset_of!(VirtioSoundConfig, controls))
-                .unwrap_or(0);
-        } else {
-            sound_config.controls = 0;
-        }
+        // if ctls_negotiated {
+        //     sound_config.controls = self
+        //         .read_once::<u32>(offset_of!(VirtioSoundConfig, controls))
+        //         .unwrap_or(0);
+        // } else {
+        //     sound_config.controls = 0;
+        // }
         sound_config
     }
 }
