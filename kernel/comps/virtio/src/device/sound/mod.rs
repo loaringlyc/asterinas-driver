@@ -3,7 +3,7 @@ pub mod device;
 
 pub static DEVICE_NAME: &str = "Virtio-Sound";
 
-use core::{default, fmt::{self, Display, Formatter}};
+use core::{fmt::{self, Display, Formatter}};
 use alloc::fmt::Debug;
 use bitflags::bitflags;
 use ostd::Pod;
@@ -217,7 +217,7 @@ pub struct VirtioSndInfo {
 
 // supported PCM stream features
 // #[derive(Copy, Clone, Debug, Eq, PartialEq,Default)]
-// enum PCM_FEATURES {
+// enum PcmFeatures {
 //     #[default]
 //     VIRTIO_SND_PCM_F_SHMEM_HOST = 0,         // supports sharing a host memory with a guest
 //     VIRTIO_SND_PCM_F_SHMEM_GUEST = 1,         // supports sharing a guest memory with a host
@@ -232,7 +232,7 @@ bitflags! {
     /// Supported PCM stream features.
     #[derive(Default)]
     #[repr(transparent)]
-    pub struct PCM_FEATURES: u32 {
+    pub struct PcmFeatures: u32 {
         /// Supports sharing a host memory with a guest.
         const SHMEM_HOST = 1 << 0;
         /// Supports sharing a guest memory with a host.
@@ -246,8 +246,8 @@ bitflags! {
     }
 }
 
-// impl From<PCM_FEATURES> for u32 {
-//     fn from(value: PCM_FEATURES) -> Self {
+// impl From<PcmFeatures> for u32 {
+//     fn from(value: PcmFeatures) -> Self {
 //         value as _
 //     }
 // }
@@ -258,7 +258,7 @@ bitflags! {
     /// Supported PCM sample formats.
     #[derive(Default)]
     #[repr(transparent)]
-    pub struct PCM_FORMATS: u64 {
+    pub struct PcmFormats: u64 {
         /// IMA ADPCM format.
         const IMA_ADPCM = 1 << 0;
         /// Mu-law format.
@@ -314,7 +314,7 @@ bitflags! {
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
-pub enum PCM_FORMAT {
+pub enum PcmFormat {
     /// IMA ADPCM format.
     #[default]
     ImaAdpcm = 0,
@@ -368,40 +368,40 @@ pub enum PCM_FORMAT {
     Iec958Subframe = 24,
 }
 
-impl From<PCM_FORMAT> for PCM_FORMATS {
-    fn from(format: PCM_FORMAT) -> Self {
+impl From<PcmFormat> for PcmFormats {
+    fn from(format: PcmFormat) -> Self {
         match format {
-            PCM_FORMAT::ImaAdpcm => PCM_FORMATS::IMA_ADPCM,
-            PCM_FORMAT::MuLaw => PCM_FORMATS::MU_LAW,
-            PCM_FORMAT::ALaw => PCM_FORMATS::A_LAW,
-            PCM_FORMAT::S8 => PCM_FORMATS::S8,
-            PCM_FORMAT::U8 => PCM_FORMATS::U8,
-            PCM_FORMAT::S16 => PCM_FORMATS::S16,
-            PCM_FORMAT::U16 => PCM_FORMATS::U16,
-            PCM_FORMAT::S18_3 => PCM_FORMATS::S18_3,
-            PCM_FORMAT::U18_3 => PCM_FORMATS::U18_3,
-            PCM_FORMAT::S20_3 => PCM_FORMATS::S20_3,
-            PCM_FORMAT::U20_3 => PCM_FORMATS::U20_3,
-            PCM_FORMAT::S24_3 => PCM_FORMATS::S24_3,
-            PCM_FORMAT::U24_3 => PCM_FORMATS::U24_3,
-            PCM_FORMAT::S20 => PCM_FORMATS::S20,
-            PCM_FORMAT::U20 => PCM_FORMATS::U20,
-            PCM_FORMAT::S24 => PCM_FORMATS::S24,
-            PCM_FORMAT::U24 => PCM_FORMATS::U24,
-            PCM_FORMAT::S32 => PCM_FORMATS::S32,
-            PCM_FORMAT::U32 => PCM_FORMATS::U32,
-            PCM_FORMAT::FLOAT => PCM_FORMATS::FLOAT,
-            PCM_FORMAT::FLOAT64 => PCM_FORMATS::FLOAT64,
-            PCM_FORMAT::DsdU8 => PCM_FORMATS::DSD_U8,
-            PCM_FORMAT::DsdU16 => PCM_FORMATS::DSD_U16,
-            PCM_FORMAT::DsdU32 => PCM_FORMATS::DSD_U32,
-            PCM_FORMAT::Iec958Subframe => PCM_FORMATS::IEC958_SUBFRAME,
+            PcmFormat::ImaAdpcm => PcmFormats::IMA_ADPCM,
+            PcmFormat::MuLaw => PcmFormats::MU_LAW,
+            PcmFormat::ALaw => PcmFormats::A_LAW,
+            PcmFormat::S8 => PcmFormats::S8,
+            PcmFormat::U8 => PcmFormats::U8,
+            PcmFormat::S16 => PcmFormats::S16,
+            PcmFormat::U16 => PcmFormats::U16,
+            PcmFormat::S18_3 => PcmFormats::S18_3,
+            PcmFormat::U18_3 => PcmFormats::U18_3,
+            PcmFormat::S20_3 => PcmFormats::S20_3,
+            PcmFormat::U20_3 => PcmFormats::U20_3,
+            PcmFormat::S24_3 => PcmFormats::S24_3,
+            PcmFormat::U24_3 => PcmFormats::U24_3,
+            PcmFormat::S20 => PcmFormats::S20,
+            PcmFormat::U20 => PcmFormats::U20,
+            PcmFormat::S24 => PcmFormats::S24,
+            PcmFormat::U24 => PcmFormats::U24,
+            PcmFormat::S32 => PcmFormats::S32,
+            PcmFormat::U32 => PcmFormats::U32,
+            PcmFormat::FLOAT => PcmFormats::FLOAT,
+            PcmFormat::FLOAT64 => PcmFormats::FLOAT64,
+            PcmFormat::DsdU8 => PcmFormats::DSD_U8,
+            PcmFormat::DsdU16 => PcmFormats::DSD_U16,
+            PcmFormat::DsdU32 => PcmFormats::DSD_U32,
+            PcmFormat::Iec958Subframe => PcmFormats::IEC958_SUBFRAME,
         }
     }
 }
 
-impl From<PCM_FORMAT> for u8 {
-    fn from(format: PCM_FORMAT) -> u8 {
+impl From<PcmFormat> for u8 {
+    fn from(format: PcmFormat) -> u8 {
         format as _
     }
 }
@@ -419,7 +419,7 @@ bitflags! {
     /// Supported PCM frame rates.
     #[derive(Default)]
     #[repr(transparent)]
-    pub struct PCM_RATES: u64 {
+    pub struct PcmRates: u64 {
         /// 5512 Hz PCM rate.
         const RATE_5512 = 1 << 0;
         /// 8000 Hz PCM rate.
@@ -454,7 +454,7 @@ bitflags! {
 /// A PCM frame rate.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
-pub enum PCM_RATE {
+pub enum PcmRate {
     /// 5512 Hz PCM rate.
     #[default]
     Rate5512 = 0,
@@ -486,29 +486,29 @@ pub enum PCM_RATE {
     Rate384000 = 13,
 }
 
-impl From<PCM_RATE> for PCM_RATES {
-    fn from(rate: PCM_RATE) -> Self {
+impl From<PcmRate> for PcmRates {
+    fn from(rate: PcmRate) -> Self {
         match rate {
-            PCM_RATE::Rate5512 => Self::RATE_5512,
-            PCM_RATE::Rate8000 => Self::RATE_8000,
-            PCM_RATE::Rate11025 => Self::RATE_11025,
-            PCM_RATE::Rate16000 => Self::RATE_16000,
-            PCM_RATE::Rate22050 => Self::RATE_22050,
-            PCM_RATE::Rate32000 => Self::RATE_32000,
-            PCM_RATE::Rate44100 => Self::RATE_44100,
-            PCM_RATE::Rate48000 => Self::RATE_48000,
-            PCM_RATE::Rate64000 => Self::RATE_64000,
-            PCM_RATE::Rate88200 => Self::RATE_88200,
-            PCM_RATE::Rate96000 => Self::RATE_96000,
-            PCM_RATE::Rate176400 => Self::RATE_176400,
-            PCM_RATE::Rate192000 => Self::RATE_192000,
-            PCM_RATE::Rate384000 => Self::RATE_384000,
+            PcmRate::Rate5512 => Self::RATE_5512,
+            PcmRate::Rate8000 => Self::RATE_8000,
+            PcmRate::Rate11025 => Self::RATE_11025,
+            PcmRate::Rate16000 => Self::RATE_16000,
+            PcmRate::Rate22050 => Self::RATE_22050,
+            PcmRate::Rate32000 => Self::RATE_32000,
+            PcmRate::Rate44100 => Self::RATE_44100,
+            PcmRate::Rate48000 => Self::RATE_48000,
+            PcmRate::Rate64000 => Self::RATE_64000,
+            PcmRate::Rate88200 => Self::RATE_88200,
+            PcmRate::Rate96000 => Self::RATE_96000,
+            PcmRate::Rate176400 => Self::RATE_176400,
+            PcmRate::Rate192000 => Self::RATE_192000,
+            PcmRate::Rate384000 => Self::RATE_384000,
         }
     }
 }
 
-impl From<PCM_RATE> for u8 {
-    fn from(rate: PCM_RATE) -> Self {
+impl From<PcmRate> for u8 {
+    fn from(rate: PcmRate) -> Self {
         rate as _
     }
 }
@@ -521,7 +521,7 @@ pub struct VirtioSndPcmInfo {
     pub hdr: VirtioSndInfo,
     pub features: u32,      // a bit map of the supported features /* 1 << VIRTIO_SND_PCM_F_XXX */
     pub formats: u64,       // supported sample format bit map /* 1 << VIRTIO_SND_PCM_FMT_XXX */
-    pub rates: u64,         // supported frame rate bit map /* 1 << VIRTIO_SND_PCM_RATE_XXX */
+    pub rates: u64,         // supported frame rate bit map /* 1 << VIRTIO_SND_PcmRate_XXX */
     pub direction: u8,      // the direction of data flow (VIRTIO_SND_D_*)
     pub channels_min: u8,   // minimum number of supported channels
     pub channels_max: u8,   // maximum number of supported channels
@@ -533,9 +533,9 @@ impl Debug for VirtioSndPcmInfo {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.debug_struct("VirtIOSndPcmInfo")
             .field("hdr", &self.hdr)
-            .field("features", &PCM_FEATURES::from_bits(self.features))
-            .field("formats", &PCM_FORMATS::from_bits(self.formats))
-            .field("rates", &PCM_RATES::from_bits(self.rates))
+            .field("features", &PcmFeatures::from_bits(self.features))
+            .field("formats", &PcmFormats::from_bits(self.formats))
+            .field("rates", &PcmRates::from_bits(self.rates))
             .field("direction", &self.direction)
             .field("channels_min", &self.channels_min)
             .field("channels_max", &self.channels_max)
@@ -554,9 +554,9 @@ impl Display for VirtioSndPcmInfo {
         write!(
             f,
             "features: {:?}, rates: {:?}, formats: {:?}, direction: {}",
-            PCM_FEATURES::from_bits(self.features),
-            PCM_RATES::from_bits(self.rates),
-            PCM_FORMATS::from_bits(self.formats),
+            PcmFeatures::from_bits(self.features),
+            PcmRates::from_bits(self.rates),
+            PcmFormats::from_bits(self.formats),
             direction
         )
     }
@@ -640,7 +640,7 @@ pub struct VirtioSndPcmSetParams {
     pub features: u32,       // specifies a selected feature bit map /* 1 << VIRTIO_SND_PCM_F_XXX */
     pub channels: u8,        // a selected number of channels
     pub format: u8,          // a selected sample format (VIRTIO_SND_PCM_FMT_*).
-    pub rate: u8,            // a selected frame rate (VIRTIO_SND_PCM_RATE_*).
+    pub rate: u8,            // a selected frame rate (VIRTIO_SND_PcmRate_*).
     pub padding: u8,
 }
 
@@ -704,10 +704,10 @@ pub struct PcmParameters {
     setup: bool,
     buffer_bytes: u32,
     period_bytes: u32,
-    features: PCM_FEATURES,
+    features: PcmFeatures,
     channels: u8,
-    format: PCM_FORMAT,
-    rate: PCM_RATE,
+    format: PcmFormat,
+    rate: PcmRate,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

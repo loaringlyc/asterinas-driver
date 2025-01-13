@@ -9,15 +9,15 @@ use ostd::mm::VmIo;
 use ostd::Pod;
 use ostd::{early_println, sync::SpinLock};
 use crate::{
-    device::VirtioDeviceError, queue::{QueueError, VirtQueue}, transport::{ConfigManager, VirtioTransport}
+    device::VirtioDeviceError, queue::VirtQueue, transport::{ConfigManager, VirtioTransport}
 };
 use super::config;
 use super::*;
-use ostd::{
-    mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmReader},
-    sync::{LocalIrqDisabled, RwLock},
-    trap::TrapFrame,
-};
+use ostd::mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions,};
+// use ostd::{mm::VmReader,
+//     sync::{LocalIrqDisabled, RwLock},
+//     trap::TrapFrame,
+// };
 
 pub struct SoundDevice {
     config_manager: ConfigManager<VirtioSoundConfig>,
@@ -89,16 +89,6 @@ impl SoundDevice {
             SpinLock::new(VirtQueue::new(TXQ_INDEX, Self::QUEUE_SIZE, transport.as_mut())?);
         let rx_queue = 
             SpinLock::new(VirtQueue::new(RXQ_INDEX, Self::QUEUE_SIZE, transport.as_mut())?);
-        
-        let snd_req = {
-            let segment = FrameAllocOptions::new().alloc_segment(1).unwrap();
-            DmaStream::map(segment.into(), DmaDirection::Bidirectional, false).unwrap()
-        };
-
-        let snd_resp = {
-            let segment = FrameAllocOptions::new().alloc_segment(1).unwrap();
-            DmaStream::map(segment.into(), DmaDirection::Bidirectional, false).unwrap()
-        };
 
         
         let send_buffer = {
@@ -330,10 +320,10 @@ impl SoundDevice {
         stream_id: u32,
         buffer_bytes: u32,
         period_bytes: u32,
-        features: PCM_FEATURES,
+        features: PcmFeatures,
         channels: u8,
-        format: PCM_FORMAT,
-        rate: PCM_RATE,
+        format: PcmFormat,
+        rate: PcmRate,
     ) -> Result<(),VirtioDeviceError> {
         if !self.set_up {
             self.set_up()?;
