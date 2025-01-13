@@ -1,10 +1,13 @@
-use ostd::Pod;
-
 pub mod config;
 pub mod device;
+pub mod stream;
 
 pub static DEVICE_NAME: &str = "Virtio-Sound";
 
+use core::{default, fmt::{self, Display, Formatter}};
+use alloc::fmt::Debug;
+use bitflags::bitflags;
+use ostd::Pod;
 // jack control request types
 pub const VIRTIO_SND_R_JACK_INFO: u32 = 1;
 pub const VIRTIO_SND_R_JACK_REMAP: u32 = 2;
@@ -46,65 +49,542 @@ pub const VIRTIO_SND_S_BAD_MSG: u32 = 0x8001;   // a control message is malforme
 pub const VIRTIO_SND_S_NOT_SUPP: u32 = 0x8002;  // requested operation or parameters are not supported
 pub const VIRTIO_SND_S_IO_ERR: u32 = 0x8003;    // an I/O error occurred
 
-// device data flow directions
-pub const VIRTIO_SND_D_OUTPUT: u8 = 0;
-pub const VIRTIO_SND_D_INPUT: u8 = 1;
+#[derive(Copy, Clone, Eq, PartialEq)]
+#[repr(u32)]
+pub enum RequestStatusCode {
+    /* common status codes */
+    Ok = 0x8000,
+    BadMsg,
+    NotSupp,
+    IoErr,
+}
 
-// supported jack features
-pub const VIRTIO_SND_JACK_F_REMAP: u8 = 0;
+impl From<RequestStatusCode> for VirtioSndHdr {
+    fn from(value: RequestStatusCode) -> Self {
+        VirtioSndHdr {
+            code: value as _,
+        }
+    }
+}
+
+/// Virtio Sound Request / Response common header
+#[derive(Debug, Clone, Copy, Pod,Eq,PartialEq)]
+#[repr(C)]
+pub struct VirtioSndHdr {
+    /// specifies a device request type (VIRTIO_SND_R_*) / response status (VIRTIO_SND_S_*)
+    /// p.s. use u32 to represent le32
+    pub code: u32 
+}
+
+impl From<CommandCode> for VirtioSndHdr {
+    fn from(value: CommandCode) -> Self {
+        VirtioSndHdr {
+            code: value.into(),
+        }
+    }
+}
+
+/// Virtio Sound event notification
+#[derive(Debug, Clone, Copy, Pod)]
+#[repr(C)]
+pub struct VirtioSndEvent {
+    pub header: VirtioSndHdr,  // indicates an event type (VIRTIO_SND_EVT_*)
+    pub data: u32              // indicates an optional event data
+}
+
+/// The notification type.
+#[repr(u32)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum NotificationType {
+    /// An external device has been connected to the jack.
+    JackConnected = 0x1000,
+    /// An external device has been disconnected from the jack.
+    JackDisconnected,
+    /// A hardware buffer period has elapsed, the period size is controlled using the `period_bytes` field.
+    PcmPeriodElapsed = 0x1100,
+    /// An underflow for the output stream or an overflow for the inputstream has occurred.
+    PcmXrun,
+}
+
+impl NotificationType {
+    /// Converts the given value to a variant of this enum, if any matches.
+    fn n(value: u32) -> Option<Self> {
+        match value {
+            0x1100 => Some(Self::PcmPeriodElapsed),
+            0x1101 => Some(Self::PcmXrun),
+            0x1000 => Some(Self::JackConnected),
+            0x1001 => Some(Self::JackDisconnected),
+            _ => None,
+        }
+    }
+}
+
+/// Notification from sound device.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Notification {
+    notification_type: NotificationType,
+    data: u32,
+}
+
+impl Notification {
+    /// Get the resource index.
+    pub fn data(&self) -> u32 {
+        self.data
+    }
+
+    /// Get the notification type.
+    pub fn notification_type(&self) -> NotificationType {
+        self.notification_type
+    }
+}
+
+// device data flow directions
+const VIRTIO_SND_D_OUTPUT: u8 = 0;
+const VIRTIO_SND_D_INPUT: u8 = 1;
+
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum CommandCode {
+    /* jack control request types */
+    RJackInfo = 1,
+    RJackRemap,
+
+    /* PCM control request types */
+    RPcmInfo = 0x0100,
+    RPcmSetParams,
+    RPcmPrepare,
+    RPcmRelease,
+    RPcmStart,
+    RPcmStop,
+
+    /* channel map control request types */
+    RChmapInfo = 0x0200,
+
+    /* jack event types */
+    EvtJackConnected = 0x1000,
+    EvtJackDisconnected,
+
+    /* PCM event types */
+    EvtPcmPeriodElapsed = 0x1100,
+    EvtPcmXrun,
+
+    /* common status codes */
+    /// success
+    SOk = 0x8000,
+    /// a control message is malformed or contains invalid parameters
+    SBadMsg,
+    /// requested operation or parameters are not supported
+    SNotSupp,
+    ///  an I/O error occurred
+    SIoErr,
+}
+
+impl From<CommandCode> for u32 {
+    fn from(code: CommandCode) -> u32 {
+        code as u32
+    }
+}
+
+
+
+/// Virtio Sound request information about any kind of configuration item (A special control message)
+#[derive(Debug, Clone, Copy, Pod)]
+#[repr(C)]
+pub struct VirtioSndQueryInfo {
+    pub hdr: VirtioSndHdr,  // a particular item request type (VIRTIO_SND_R_*_INFO)
+    pub start_id: u32,         // starting identifier for the item
+    pub count: u32,            // number of items for which information is requested
+    pub size: u32              // size of the structure containing information for one item
+}
+
+
+#[derive(Debug, Clone, Copy, Pod)]
+#[repr(C)]
+struct VirtIOSndQueryInfoRsp {
+    hdr: VirtioSndHdr,
+    info: VirtioSndInfo,
+}
+
+/// Virtio Sound response common information header
+#[derive(Debug, Clone, Copy, Pod,Eq,PartialEq)]
+#[repr(C)]
+pub struct VirtioSndInfo {
+    pub hda_fn_nid: u32   // a function group node identifier (Used to link together different types of resources)
+}
+
+
 
 // supported PCM stream features
-pub const VIRTIO_SND_PCM_F_SHMEM_HOST: u8 = 0;          // supports sharing a host memory with a guest
-pub const VIRTIO_SND_PCM_F_SHMEM_GUEST: u8 = 1;         // supports sharing a guest memory with a host
-pub const VIRTIO_SND_PCM_F_MSG_POLLING: u8 = 2;         // supports polling mode for message-based transport
-pub const VIRTIO_SND_PCM_F_EVT_SHMEM_PERIODS: u8 = 3;   // supports elapsed period notifications for shared memory transport
-pub const VIRTIO_SND_PCM_F_EVT_XRUNS: u8 = 4;           // supports underrun/overrun notifications
+// #[derive(Copy, Clone, Debug, Eq, PartialEq,Default)]
+// enum PCM_FEATURES {
+//     #[default]
+//     VIRTIO_SND_PCM_F_SHMEM_HOST = 0,         // supports sharing a host memory with a guest
+//     VIRTIO_SND_PCM_F_SHMEM_GUEST = 1,         // supports sharing a guest memory with a host
+//     VIRTIO_SND_PCM_F_MSG_POLLING= 2,         // supports polling mode for message-based transport
+//     VIRTIO_SND_PCM_F_EVT_SHMEM_PERIODS= 3,   // supports elapsed period notifications for shared memory transport
+//     VIRTIO_SND_PCM_F_EVT_XRUNS= 4          // supports underrun/overrun notifications
+// }
+
+
+
+bitflags! {
+    /// Supported PCM stream features.
+    #[derive(Default)]
+    #[repr(transparent)]
+    pub struct PCM_FEATURES: u32 {
+        /// Supports sharing a host memory with a guest.
+        const SHMEM_HOST = 1 << 0;
+        /// Supports sharing a guest memory with a host.
+        const SHMEM_GUEST = 1 << 1;
+        /// Supports polling mode for message-based transport.
+        const MSG_POLLING = 1 << 2;
+        /// Supports elapsed period notifications for shared memory transport.
+        const EVT_SHMEM_PERIODS = 1 << 3;
+        /// Supports underrun/overrun notifications.
+        const EVT_XRUNS = 1 << 4;
+    }
+}
+
+// impl From<PCM_FEATURES> for u32 {
+//     fn from(value: PCM_FEATURES) -> Self {
+//         value as _
+//     }
+// }
 
 // supported PCM sample formats
 //   analog formats (width / physical width)
-pub const VIRTIO_SND_PCM_FMT_IMA_ADPCM: u8 = 0;
-pub const VIRTIO_SND_PCM_FMT_MU_LAW: u8 = 1;
-pub const VIRTIO_SND_PCM_FMT_A_LAW: u8 = 2;
-pub const VIRTIO_SND_PCM_FMT_S8: u8 = 3;
-pub const VIRTIO_SND_PCM_FMT_U8: u8 = 4;
-pub const VIRTIO_SND_PCM_FMT_S16: u8 = 5;
-pub const VIRTIO_SND_PCM_FMT_U16: u8 = 6;
-pub const VIRTIO_SND_PCM_FMT_S18_3: u8 = 7;
-pub const VIRTIO_SND_PCM_FMT_U18_3: u8 = 8;
-pub const VIRTIO_SND_PCM_FMT_S20_3: u8 = 9;
-pub const VIRTIO_SND_PCM_FMT_U20_3: u8 = 10;
-pub const VIRTIO_SND_PCM_FMT_S24_3: u8 = 11;
-pub const VIRTIO_SND_PCM_FMT_U24_3: u8 = 12;
-pub const VIRTIO_SND_PCM_FMT_S20: u8 = 13;
-pub const VIRTIO_SND_PCM_FMT_U20: u8 = 14;
-pub const VIRTIO_SND_PCM_FMT_S24: u8 = 15;
-pub const VIRTIO_SND_PCM_FMT_U24: u8 = 16;
-pub const VIRTIO_SND_PCM_FMT_S32: u8 = 17;
-pub const VIRTIO_SND_PCM_FMT_U32: u8 = 18;
-pub const VIRTIO_SND_PCM_FMT_FLOAT: u8 = 19;
-pub const VIRTIO_SND_PCM_FMT_FLOAT64: u8 = 20;
-//   digital formats (width / physical width)
-pub const VIRTIO_SND_PCM_FMT_DSD_U8: u8 = 21;
-pub const VIRTIO_SND_PCM_FMT_DSD_U16: u8 = 22;
-pub const VIRTIO_SND_PCM_FMT_DSD_U32: u8 = 23;
-pub const VIRTIO_SND_PCM_FMT_IEC958_SUBFRAME: u8 = 24;
-pub(crate) const _VIRTIO_SND_PCM_FMT_MAX: u8 = 25;
+bitflags! {
+    /// Supported PCM sample formats.
+    #[derive(Default)]
+    #[repr(transparent)]
+    pub struct PCM_FORMATS: u64 {
+        /// IMA ADPCM format.
+        const IMA_ADPCM = 1 << 0;
+        /// Mu-law format.
+        const MU_LAW = 1 << 1;
+        /// A-law format.
+        const A_LAW = 1 << 2;
+        /// Signed 8-bit format.
+        const S8 = 1 << 3;
+        /// Unsigned 8-bit format.
+        const U8 = 1 << 4;
+        /// Signed 16-bit format.
+        const S16 = 1 << 5;
+        /// Unsigned 16-bit format.
+        const U16 = 1 << 6;
+        /// Signed 18.3-bit format.
+        const S18_3 = 1 << 7;
+        /// Unsigned 18.3-bit format.
+        const U18_3 = 1 << 8;
+        /// Signed 20.3-bit format.
+        const S20_3 = 1 << 9;
+        /// Unsigned 20.3-bit format.
+        const U20_3 = 1 << 10;
+        /// Signed 24.3-bit format.
+        const S24_3 = 1 << 11;
+        /// Unsigned 24.3-bit format.
+        const U24_3 = 1 << 12;
+        /// Signed 20-bit format.
+        const S20 = 1 << 13;
+        /// Unsigned 20-bit format.
+        const U20 = 1 << 14;
+        /// Signed 24-bit format.
+        const S24 = 1 << 15;
+        /// Unsigned 24-bit format.
+        const U24 = 1 << 16;
+        /// Signed 32-bit format.
+        const S32 = 1 << 17;
+        /// Unsigned 32-bit format.
+        const U32 = 1 << 18;
+        /// 32-bit floating-point format.
+        const FLOAT = 1 << 19;
+        /// 64-bit floating-point format.
+        const FLOAT64 = 1 << 20;
+        /// DSD unsigned 8-bit format.
+        const DSD_U8 = 1 << 21;
+        /// DSD unsigned 16-bit format.
+        const DSD_U16 = 1 << 22;
+        /// DSD unsigned 32-bit format.
+        const DSD_U32 = 1 << 23;
+        /// IEC958 subframe format.
+        const IEC958_SUBFRAME = 1 << 24;
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[repr(u8)]
+pub enum PCM_FORMAT {
+    /// IMA ADPCM format.
+    #[default]
+    ImaAdpcm = 0,
+    /// Mu-law format.
+    MuLaw = 1,
+    /// A-law format.
+    ALaw = 2,
+    /// Signed 8-bit format.
+    S8 = 3,
+    /// Unsigned 8-bit format.
+    U8 = 4,
+    /// Signed 16-bit format.
+    S16 = 5,
+    /// Unsigned 16-bit format.
+    U16 = 6,
+    /// Signed 18.3-bit format.
+    S18_3 = 7,
+    /// Unsigned 18.3-bit format.
+    U18_3 = 8,
+    /// Signed 20.3-bit format.
+    S20_3 = 9,
+    /// Unsigned 20.3-bit format.
+    U20_3 = 10,
+    /// Signed 24.3-bit format.
+    S24_3 = 11,
+    /// Unsigned 24.3-bit format.
+    U24_3 = 12,
+    /// Signed 20-bit format.
+    S20 = 13,
+    /// Unsigned 20-bit format.
+    U20 = 14,
+    /// Signed 24-bit format.
+    S24 = 15,
+    /// Unsigned 24-bit format.
+    U24 = 16,
+    /// Signed 32-bit format.
+    S32 = 17,
+    /// Unsigned 32-bit format.
+    U32 = 18,
+    /// 32-bit floating-point format.
+    FLOAT = 19,
+    /// 64-bit floating-point format.
+    FLOAT64 = 20,
+    /// DSD unsigned 8-bit format.
+    DsdU8 = 21,
+    /// DSD unsigned 16-bit format.
+    DsdU16 = 22,
+    /// DSD unsigned 32-bit format.
+    DsdU32 = 23,
+    /// IEC958 subframe format.
+    Iec958Subframe = 24,
+}
+
+impl From<PCM_FORMAT> for PCM_FORMATS {
+    fn from(format: PCM_FORMAT) -> Self {
+        match format {
+            PCM_FORMAT::ImaAdpcm => PCM_FORMATS::IMA_ADPCM,
+            PCM_FORMAT::MuLaw => PCM_FORMATS::MU_LAW,
+            PCM_FORMAT::ALaw => PCM_FORMATS::A_LAW,
+            PCM_FORMAT::S8 => PCM_FORMATS::S8,
+            PCM_FORMAT::U8 => PCM_FORMATS::U8,
+            PCM_FORMAT::S16 => PCM_FORMATS::S16,
+            PCM_FORMAT::U16 => PCM_FORMATS::U16,
+            PCM_FORMAT::S18_3 => PCM_FORMATS::S18_3,
+            PCM_FORMAT::U18_3 => PCM_FORMATS::U18_3,
+            PCM_FORMAT::S20_3 => PCM_FORMATS::S20_3,
+            PCM_FORMAT::U20_3 => PCM_FORMATS::U20_3,
+            PCM_FORMAT::S24_3 => PCM_FORMATS::S24_3,
+            PCM_FORMAT::U24_3 => PCM_FORMATS::U24_3,
+            PCM_FORMAT::S20 => PCM_FORMATS::S20,
+            PCM_FORMAT::U20 => PCM_FORMATS::U20,
+            PCM_FORMAT::S24 => PCM_FORMATS::S24,
+            PCM_FORMAT::U24 => PCM_FORMATS::U24,
+            PCM_FORMAT::S32 => PCM_FORMATS::S32,
+            PCM_FORMAT::U32 => PCM_FORMATS::U32,
+            PCM_FORMAT::FLOAT => PCM_FORMATS::FLOAT,
+            PCM_FORMAT::FLOAT64 => PCM_FORMATS::FLOAT64,
+            PCM_FORMAT::DsdU8 => PCM_FORMATS::DSD_U8,
+            PCM_FORMAT::DsdU16 => PCM_FORMATS::DSD_U16,
+            PCM_FORMAT::DsdU32 => PCM_FORMATS::DSD_U32,
+            PCM_FORMAT::Iec958Subframe => PCM_FORMATS::IEC958_SUBFRAME,
+        }
+    }
+}
+
+impl From<PCM_FORMAT> for u64 {
+    fn from(format: PCM_FORMAT) -> u64 {
+        format as _
+    }
+}
+
+/// PCM control request / PCM common header
+#[derive(Debug, Clone, Copy, Pod)]
+#[repr(C)]
+pub struct VirtioSndPcmHdr {
+    pub header: VirtioSndHdr, // request type (VIRTIO_SND_R_PCM_*)
+    pub stream_id: u32        // PCM stream identifier from 0 to streams - 1
+}
 
 // supported PCM frame rates
-pub const VIRTIO_SND_PCM_RATE_5512: u8 = 0;
-pub const VIRTIO_SND_PCM_RATE_8000: u8 = 1;
-pub const VIRTIO_SND_PCM_RATE_11025: u8 = 2;
-pub const VIRTIO_SND_PCM_RATE_16000: u8 = 3;
-pub const VIRTIO_SND_PCM_RATE_22050: u8 = 4;
-pub const VIRTIO_SND_PCM_RATE_32000: u8 = 5;
-pub const VIRTIO_SND_PCM_RATE_44100: u8 = 6;
-pub const VIRTIO_SND_PCM_RATE_48000: u8 = 7;
-pub const VIRTIO_SND_PCM_RATE_64000: u8 = 8;
-pub const VIRTIO_SND_PCM_RATE_88200: u8 = 9;
-pub const VIRTIO_SND_PCM_RATE_96000: u8 = 10;
-pub const VIRTIO_SND_PCM_RATE_176400: u8 = 11;
-pub const VIRTIO_SND_PCM_RATE_192000: u8 = 12;
-pub const VIRTIO_SND_PCM_RATE_384000: u8 = 13;
+bitflags! {
+    /// Supported PCM frame rates.
+    #[derive(Default)]
+    #[repr(transparent)]
+    pub struct PCM_RATES: u64 {
+        /// 5512 Hz PCM rate.
+        const RATE_5512 = 1 << 0;
+        /// 8000 Hz PCM rate.
+        const RATE_8000 = 1 << 1;
+        /// 11025 Hz PCM rate.
+        const RATE_11025 = 1 << 2;
+        /// 16000 Hz PCM rate.
+        const RATE_16000 = 1 << 3;
+        /// 22050 Hz PCM rate.
+        const RATE_22050 = 1 << 4;
+        /// 32000 Hz PCM rate.
+        const RATE_32000 = 1 << 5;
+        /// 44100 Hz PCM rate.
+        const RATE_44100 = 1 << 6;
+        /// 48000 Hz PCM rate.
+        const RATE_48000 = 1 << 7;
+        /// 64000 Hz PCM rate.
+        const RATE_64000 = 1 << 8;
+        /// 88200 Hz PCM rate.
+        const RATE_88200 = 1 << 9;
+        /// 96000 Hz PCM rate.
+        const RATE_96000 = 1 << 10;
+        /// 176400 Hz PCM rate.
+        const RATE_176400 = 1 << 11;
+        /// 192000 Hz PCM rate.
+        const RATE_192000 = 1 << 12;
+        /// 384000 Hz PCM rate.
+        const RATE_384000 = 1 << 13;
+    }
+}
+
+/// A PCM frame rate.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[repr(u8)]
+pub enum PCM_RATE {
+    /// 5512 Hz PCM rate.
+    #[default]
+    Rate5512 = 0,
+    /// 8000 Hz PCM rate.
+    Rate8000 = 1,
+    /// 11025 Hz PCM rate.
+    Rate11025 = 2,
+    /// 16000 Hz PCM rate.
+    Rate16000 = 3,
+    /// 22050 Hz PCM rate.
+    Rate22050 = 4,
+    /// 32000 Hz PCM rate.
+    Rate32000 = 5,
+    /// 44100 Hz PCM rate.
+    Rate44100 = 6,
+    /// 48000 Hz PCM rate.
+    Rate48000 = 7,
+    /// 64000 Hz PCM rate.
+    Rate64000 = 8,
+    /// 88200 Hz PCM rate.
+    Rate88200 = 9,
+    /// 96000 Hz PCM rate.
+    Rate96000 = 10,
+    /// 176400 Hz PCM rate.
+    Rate176400 = 11,
+    /// 192000 Hz PCM rate.
+    Rate192000 = 12,
+    /// 384000 Hz PCM rate.
+    Rate384000 = 13,
+}
+
+impl From<PCM_RATE> for PCM_RATES {
+    fn from(rate: PCM_RATE) -> Self {
+        match rate {
+            PCM_RATE::Rate5512 => Self::RATE_5512,
+            PCM_RATE::Rate8000 => Self::RATE_8000,
+            PCM_RATE::Rate11025 => Self::RATE_11025,
+            PCM_RATE::Rate16000 => Self::RATE_16000,
+            PCM_RATE::Rate22050 => Self::RATE_22050,
+            PCM_RATE::Rate32000 => Self::RATE_32000,
+            PCM_RATE::Rate44100 => Self::RATE_44100,
+            PCM_RATE::Rate48000 => Self::RATE_48000,
+            PCM_RATE::Rate64000 => Self::RATE_64000,
+            PCM_RATE::Rate88200 => Self::RATE_88200,
+            PCM_RATE::Rate96000 => Self::RATE_96000,
+            PCM_RATE::Rate176400 => Self::RATE_176400,
+            PCM_RATE::Rate192000 => Self::RATE_192000,
+            PCM_RATE::Rate384000 => Self::RATE_384000,
+        }
+    }
+}
+
+impl From<PCM_RATE> for u8 {
+    fn from(rate: PCM_RATE) -> Self {
+        rate as _
+    }
+}
+
+
+/// PCM response information
+#[derive(Clone, Copy, Pod,Eq,PartialEq)]
+#[repr(C)]
+pub struct VirtioSndPcmInfo {
+    pub hdr: VirtioSndInfo,
+    pub features: u32,      // a bit map of the supported features /* 1 << VIRTIO_SND_PCM_F_XXX */
+    pub formats: u64,       // supported sample format bit map /* 1 << VIRTIO_SND_PCM_FMT_XXX */
+    pub rates: u64,         // supported frame rate bit map /* 1 << VIRTIO_SND_PCM_RATE_XXX */
+    pub direction: u8,      // the direction of data flow (VIRTIO_SND_D_*)
+    pub channels_min: u8,   // minimum number of supported channels
+    pub channels_max: u8,   // maximum number of supported channels
+
+    pub padding: [u8; 5],
+}
+
+impl Debug for VirtioSndPcmInfo {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.debug_struct("VirtIOSndPcmInfo")
+            .field("hdr", &self.hdr)
+            .field("features", &PCM_FEATURES::from_bits(self.features))
+            .field("formats", &PCM_FORMATS::from_bits(self.formats))
+            .field("rates", &PCM_RATES::from_bits(self.rates))
+            .field("direction", &self.direction)
+            .field("channels_min", &self.channels_min)
+            .field("channels_max", &self.channels_max)
+            .field("_padding", &self.padding)
+            .finish()
+    }
+}
+
+impl Display for VirtioSndPcmInfo {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let direction = if self.direction == VIRTIO_SND_D_INPUT {
+            "INPUT"
+        } else {
+            "OUTPUT"
+        };
+        write!(
+            f,
+            "features: {:?}, rates: {:?}, formats: {:?}, direction: {}",
+            PCM_FEATURES::from_bits(self.features),
+            PCM_RATES::from_bits(self.rates),
+            PCM_FORMATS::from_bits(self.formats),
+            direction
+        )
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemInformationRequestType {
+    /// Represents a jack information request.
+    RJackInfo = 1,
+    /// Represents a PCM information request.
+    RPcmInfo = 0x0100,
+    /// Represents a channel map information request.
+    RChmapInfo = 0x0200,
+}
+
+impl From<ItemInformationRequestType> for VirtioSndHdr {
+    fn from(value: ItemInformationRequestType) -> Self {
+        VirtioSndHdr {
+            code: value.into(),
+        }
+    }
+}
+
+impl From<ItemInformationRequestType> for u32 {
+    fn from(request_type: ItemInformationRequestType) -> u32 {
+        request_type as _
+    }
+}
 
 // standard channel position definition
 pub const VIRTIO_SND_CHMAP_NONE: u8 = 0; /* undefined */
@@ -149,99 +629,11 @@ pub const VIRTIO_SND_CHMAP_BRC: u8 = 40; /* bottom right center */
 pub const VIRTIO_SND_CHMAP_MAX_SIZE: usize = 18;
 
 
-/// Virtio Sound Request / Response common header
-#[derive(Debug, Clone, Copy, Pod)]
-#[repr(C)]
-pub struct VirtioSndHdr {
-    /// specifies a device request type (VIRTIO_SND_R_*) / response status (VIRTIO_SND_S_*)
-    /// p.s. use u32 to represent le32
-    pub code: u32 
-}
-
-/// Virtio Sound event notification
-#[derive(Debug, Clone, Copy, Pod)]
-#[repr(C)]
-pub struct VirtioSndEvent {
-    pub header: VirtioSndHdr,  // indicates an event type (VIRTIO_SND_EVT_*)
-    pub data: u32              // indicates an optional event data
-}
-
-/// Virtio Sound request information about any kind of configuration item (A special control message)
-#[derive(Debug, Clone, Copy, Pod)]
-#[repr(C)]
-pub struct VirtioSndQueryInfo {
-    pub header: VirtioSndHdr,  // a particular item request type (VIRTIO_SND_R_*_INFO)
-    pub start_id: u32,         // starting identifier for the item
-    pub count: u32,            // number of items for which information is requested
-    pub size: u32              // size of the structure containing information for one item
-}
-
-/// Virtio Sound response common information header
-#[derive(Debug, Clone, Copy, Pod)]
-#[repr(C)]
-pub struct VirtioSndInfo {
-    pub hda_fn_nid: u32   // a function group node identifier (Used to link together different types of resources)
-}
-
-/// Jack control request header / Jack common header
-#[derive(Debug, Clone, Copy, Pod)]
-#[repr(C)]
-pub struct VirtioSndJackHdr {
-    pub header: VirtioSndHdr, // request type (VIRTIO_SND_R_JACK_*)
-    pub jack_id: u32          // jack identifier from 0 to jacks - 1
-}
-
-/// Jack response information about available jacks
-#[derive(Debug, Clone, Copy, Pod)]
-#[repr(C)]
-pub struct VirtioSndJackInfo {
-    pub header: VirtioSndHdr, // request type (VIRTIO_SND_R_JACK_*)
-    pub features: u32,        // supported feature bit map
-    pub hda_reg_defconf: u32, // a pin default configuration value
-    pub hda_reg_caps: u32,    // a pin capabilities value
-    pub connected: u8,        // current jack connection status (1 - connected, 0 - disconnected)
-    pub padding: [u8; 7]      //
-}
-
-/// Jack Remap control request
-/// If the VIRTIO_SND_JACK_F_REMAP feature bit is set in the jack information, then the driver can send a
-///    control request to change the association and/or sequence number for the specified jack ID.
-#[derive(Debug, Clone, Copy, Pod)]
-#[repr(C)]
-pub struct VirtioSoundJackRemap {
-    pub header: VirtioSndHdr, 
-    pub association: u32,     // selected association number
-    pub sequence: u32         // selected sequence number
-}
-
-/// PCM control request / PCM common header
-#[derive(Debug, Clone, Copy, Pod)]
-#[repr(C)]
-pub struct VirtioSndPcmHeader {
-    pub header: VirtioSndHdr, // request type (VIRTIO_SND_R_PCM_*)
-    pub stream_id: u32        // PCM stream identifier from 0 to streams - 1
-}
-
-/// PCM response information
-#[derive(Debug, Clone, Copy, Pod)]
-#[repr(C)]
-pub struct VirtioSndPcmInfo {
-    pub header: VirtioSndInfo,
-    pub features: u32,      // a bit map of the supported features /* 1 << VIRTIO_SND_PCM_F_XXX */
-    pub formats: u64,       // supported sample format bit map /* 1 << VIRTIO_SND_PCM_FMT_XXX */
-    pub rates: u64,         // supported frame rate bit map /* 1 << VIRTIO_SND_PCM_RATE_XXX */
-    pub direction: u8,      // the direction of data flow (VIRTIO_SND_D_*)
-    pub channels_min: u8,   // minimum number of supported channels
-    pub channels_max: u8,   // maximum number of supported channels
-
-    pub padding: [u8; 5],
-}
-
 /// Set selected stream parameters for the specified stream ID
 #[derive(Debug, Clone, Copy, Pod)]
 #[repr(C)]
 pub struct VirtioSndPcmSetParams {
-    pub header: VirtioSndPcmHeader, // 
+    pub hdr: VirtioSndPcmHdr, // 
     pub buffer_bytes: u32,   // the size of the hardware buffer used by the driver
     pub period_bytes: u32,   // the size of the hardware period used by the driver
     pub features: u32,       // specifies a selected feature bit map /* 1 << VIRTIO_SND_PCM_F_XXX */
@@ -266,12 +658,191 @@ pub struct VirtioSndPcmStatus {
     pub latency_bytes: u32,  // indicates the current device latency
 }
 
-/// channel maps response information
+// channel maps response information
 #[derive(Debug, Clone, Copy, Pod)]
 #[repr(C)]
 pub struct VirtioSndChmapInfo {
-    pub header: VirtioSndInfo,
+    pub hdr: VirtioSndInfo,
     pub direction: u8,       // the direction of data flow (VIRTIO_SND_D_*)
     pub channels: u8,        // the number of valid channel position values
     pub positions: [u8; VIRTIO_SND_CHMAP_MAX_SIZE],  //channel position values (VIRTIO_SND_CHMAP_*)
+}
+
+impl Display for VirtioSndChmapInfo {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let direction = if self.direction == VIRTIO_SND_D_INPUT {
+            "INPUT"
+        } else {
+            "OUTPUT"
+        };
+        write!(
+            f,
+            "direction: {}, channels: {}, postions: [",
+            direction, self.channels
+        )?;
+        for i in 0..usize::from(self.channels) {
+            if i != 0 {
+                write!(f, ", ")?;
+            }
+            match ChannelPosition::try_from(self.positions[i]) {
+                Ok(position)=>{
+                    write!(f, "{:?}", position)?;
+                },
+                Err(_)=>{
+                    write!(f, "{}", self.positions[i])?;
+                }
+            }
+        }
+        write!(f, "]")?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq,Default)]
+pub struct PcmParameters {
+    setup: bool,
+    buffer_bytes: u32,
+    period_bytes: u32,
+    features: PCM_FEATURES,
+    channels: u8,
+    format: PCM_FORMAT,
+    rate: PCM_RATE,
+}
+
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u8)]
+enum ChannelPosition {
+    /// undefined
+    None = 0,
+    /// silent
+    Na,
+    /// mono stream
+    Mono,
+    /// front left
+    Fl,
+    /// front right
+    Fr,
+    /// rear left
+    Rl,
+    /// rear right
+    Rr,
+    /// front center
+    Fc,
+    /// low frequency (LFE)
+    Lfe,
+    /// side left
+    Sl,
+    /// side right
+    Sr,
+    /// rear center
+    Rc,
+    /// front left center
+    Flc,
+    /// front right center
+    Frc,
+    /// rear left center
+    Rlc,
+    /// rear right center
+    Rrc,
+    /// front left wide
+    Flw,
+    /// front right wide
+    Frw,
+    /// front left high
+    Flh,
+    /// front center high
+    Fch,
+    /// front right high
+    Frh,
+    /// top center
+    Tc,
+    /// top front left
+    Tfl,
+    /// top front right
+    Tfr,
+    /// top front center
+    Tfc,
+    /// top rear left
+    Trl,
+    /// top rear right
+    Trr,
+    /// top rear center
+    Trc,
+    /// top front left center
+    Tflc,
+    /// top front right center
+    Tfrc,
+    /// top side left
+    Tsl,
+    /// top side right
+    Tsr,
+    /// left LFE
+    Llfe,
+    /// right LFE
+    Rlfe,
+    /// bottom center
+    Bc,
+    /// bottom left center
+    Blc,
+    /// bottom right center
+    Brc,
+}
+
+impl TryFrom<u8> for ChannelPosition {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(ChannelPosition::None),
+            1 => Ok(ChannelPosition::Na),
+            2 => Ok(ChannelPosition::Mono),
+            3 => Ok(ChannelPosition::Fl),
+            4 => Ok(ChannelPosition::Fr),
+            5 => Ok(ChannelPosition::Rl),
+            6 => Ok(ChannelPosition::Rr),
+            7 => Ok(ChannelPosition::Fc),
+            8 => Ok(ChannelPosition::Lfe),
+            9 => Ok(ChannelPosition::Sl),
+            10 => Ok(ChannelPosition::Sr),
+            11 => Ok(ChannelPosition::Rc),
+            12 => Ok(ChannelPosition::Flc),
+            13 => Ok(ChannelPosition::Frc),
+            14 => Ok(ChannelPosition::Rlc),
+            15 => Ok(ChannelPosition::Flw),
+            16 => Ok(ChannelPosition::Frw),
+            17 => Ok(ChannelPosition::Flh),
+            18 => Ok(ChannelPosition::Fch),
+            19 => Ok(ChannelPosition::Frh),
+            20 => Ok(ChannelPosition::Tc),
+            21 => Ok(ChannelPosition::Tfl),
+            22 => Ok(ChannelPosition::Tfr),
+            23 => Ok(ChannelPosition::Tfc),
+            24 => Ok(ChannelPosition::Trl),
+            25 => Ok(ChannelPosition::Trr),
+            26 => Ok(ChannelPosition::Trc),
+            27 => Ok(ChannelPosition::Tflc),
+            28 => Ok(ChannelPosition::Tfrc),
+            29 => Ok(ChannelPosition::Tsl),
+            30 => Ok(ChannelPosition::Tsr),
+            31 => Ok(ChannelPosition::Llfe),
+            32 => Ok(ChannelPosition::Rlfe),
+            33 => Ok(ChannelPosition::Bc),
+            34 => Ok(ChannelPosition::Blc),
+            35 => Ok(ChannelPosition::Brc),
+            
+            _ => Err(()),
+        }
+    }
+}
+
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+pub enum PCMState {
+    #[default]
+    SetParameters,
+    Prepare,
+    Release,
+    Start,
+    Stop,
 }
