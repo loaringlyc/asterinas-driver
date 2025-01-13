@@ -1,19 +1,21 @@
-use alloc::collections::btree_map::BTreeMap;
-use alloc::{vec::Vec,vec};
-use alloc::{boxed::Box, sync::Arc};
-use core::hint::spin_loop;
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec, vec::Vec};
+use core::{array, hint::spin_loop};
 
 use config::{SoundFeatures, VirtioSoundConfig};
 use log::{debug, error, info, warn};
-use ostd::mm::VmIo;
-use ostd::Pod;
-use ostd::{early_println, sync::SpinLock};
-use crate::{
-    device::VirtioDeviceError, queue::VirtQueue, transport::{ConfigManager, VirtioTransport}
+use ostd::{
+    early_println,
+    mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmIo},
+    sync::{Mutex, SpinLock},
+    Pod,
 };
-use super::config;
-use super::*;
-use ostd::mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions,};
+
+use super::{config, *};
+use crate::{
+    device::VirtioDeviceError,
+    queue::VirtQueue,
+    transport::{ConfigManager, VirtioTransport},
+};
 // use ostd::{mm::VmReader,
 //     sync::{LocalIrqDisabled, RwLock},
 //     trap::TrapFrame,
@@ -38,7 +40,7 @@ pub struct SoundDevice {
     // jack_infos: Option<Vec<VirtIOSndJackInfo>>,
     chmap_infos: Option<Vec<VirtioSndChmapInfo>>,
 
-    pcm_parameters:Vec<PcmParameters>,
+    pcm_parameters: Vec<PcmParameters>, // 是否需要考虑锁的问题？
 
     set_up: bool,
 
@@ -46,9 +48,8 @@ pub struct SoundDevice {
 
     pcm_states: Vec<PCMState>,
 
-    token_buf: BTreeMap<u16, Vec<u8>>
+    token_buf: BTreeMap<u16, Vec<u8>>,
 }
-
 
 impl SoundDevice {
     const QUEUE_SIZE: u16 = 2;
@@ -68,7 +69,7 @@ impl SoundDevice {
         // let ctls_negotiated = (negotiated_features & SoundFeatures::VIRTIO_SND_F_CTLS.bits()) != 0;
 
         let config_manager = VirtioSoundConfig::new_manager(transport.as_ref());
-        debug!("virtio_sound_config={:?}",config_manager.read_config());
+        debug!("virtio_sound_config={:?}", config_manager.read_config());
         let sound_config = config_manager.read_config();
 
         debug!("virtio_sound_config = {:?}", sound_config);
@@ -81,16 +82,27 @@ impl SoundDevice {
         const EVENTQ_INDEX: u16 = 1;
         const TXQ_INDEX: u16 = 2;
         const RXQ_INDEX: u16 = 3;
-        let control_queue = 
-            SpinLock::new(VirtQueue::new(CONTROLQ_INDEX, Self::QUEUE_SIZE, transport.as_mut())?);
-        let event_queue = 
-            SpinLock::new(VirtQueue::new(EVENTQ_INDEX, Self::QUEUE_SIZE, transport.as_mut())?);
-        let tx_queue = 
-            SpinLock::new(VirtQueue::new(TXQ_INDEX, Self::QUEUE_SIZE, transport.as_mut())?);
-        let rx_queue = 
-            SpinLock::new(VirtQueue::new(RXQ_INDEX, Self::QUEUE_SIZE, transport.as_mut())?);
+        let control_queue = SpinLock::new(VirtQueue::new(
+            CONTROLQ_INDEX,
+            Self::QUEUE_SIZE,
+            transport.as_mut(),
+        )?);
+        let event_queue = SpinLock::new(VirtQueue::new(
+            EVENTQ_INDEX,
+            Self::QUEUE_SIZE,
+            transport.as_mut(),
+        )?);
+        let tx_queue = SpinLock::new(VirtQueue::new(
+            TXQ_INDEX,
+            Self::QUEUE_SIZE,
+            transport.as_mut(),
+        )?);
+        let rx_queue = SpinLock::new(VirtQueue::new(
+            RXQ_INDEX,
+            Self::QUEUE_SIZE,
+            transport.as_mut(),
+        )?);
 
-        
         let send_buffer = {
             let segment = FrameAllocOptions::new().alloc_segment(1).unwrap();
             DmaStream::map(segment.into(), DmaDirection::ToDevice, false).unwrap()
@@ -100,13 +112,14 @@ impl SoundDevice {
             let segment = FrameAllocOptions::new().alloc_segment(1).unwrap();
             DmaStream::map(segment.into(), DmaDirection::FromDevice, false).unwrap()
         };
+        early_println!("The length of receive_buffer is {:?}",receive_buffer.nbytes());
 
         let mut pcm_parameters = vec![];
         for _ in 0..sound_config.streams {
             pcm_parameters.push(PcmParameters::default());
         }
 
-        let device = Arc::new(SoundDevice {
+        let device = Arc::new(Mutex::new(SoundDevice {
             config_manager,
             transport: SpinLock::new(transport),
             control_queue,
@@ -122,56 +135,41 @@ impl SoundDevice {
             token_rsp: BTreeMap::new(),
             pcm_states: vec![],
             token_buf: BTreeMap::new(),
-        });
+        }));
 
-        // Register irq callbacks
-        let mut transport = device.transport.disable_irq().lock();
-        // TODO: callbacks for microphone input
+        test_device(device);
 
-        transport.finish_init();
+        // // Register irq callbacks
+        // let mut transport = device.transport.disable_irq().lock();
+        // // TODO: callbacks for microphone input
 
-        drop(transport);
-        
+        // transport.finish_init();
+
+        // drop(transport);
 
         Ok(())
     }
 
-
-    // fn request<Req: IntoBytes + Immutable>(&mut self, req: Req) -> Result<VirtioSndHdr,VirtioDeviceError> {
-    //     self.control_queue.add_notify_wait_pop(
-    //         &[req.as_bytes()],
-    //         &mut [self.queue_buf_recv.as_mut_bytes()],
-    //         &mut self.transport,
-    //     )?;
-    //     Ok(VirtioSndHdr::read_from_prefix(&self.queue_buf_recv)
-    //         .unwrap()
-    //         .0)
-    // }
-
-
-    fn request<Req: Pod>(&mut self, req: Req) -> Result<VirtioSndHdr, VirtioDeviceError>{
-        // 参数req表示一个request结构体，存放request信息，如VirtIOSndQueryInfo 
+    fn request<Req: Pod>(&mut self, req: Req) -> Result<VirtioSndHdr, VirtioDeviceError> {
+        // 参数req表示一个request结构体，存放request信息，如VirtIOSndQueryInfo
         // 这里的Pod trait可以保证可转换为一连串bytes，然后就可以用len的到长度了
         let req_slice = {
-            let req_slice = 
-                DmaStreamSlice::new(&self.send_buffer, 0, req.as_bytes().len());
+            let req_slice = DmaStreamSlice::new(&self.send_buffer, 0, req.as_bytes().len());
             req_slice.write_val(0, &req).unwrap();
             req_slice.sync().unwrap();
             req_slice
         }; // 将req写入snd_req这个DmaStream
 
         let resp_slice = {
-            let resp_slice = 
-                DmaStreamSlice::new(&self.receive_buffer, 0, SND_HDR_SIZE);
+            let resp_slice = DmaStreamSlice::new(&self.receive_buffer, 0, 9 * SND_HDR_SIZE);
             resp_slice
         }; // 希望写入snd_resp这个DmaStream的前面 （目前只预留 返回一个最基础的OK或者ERR 的长度）
-        
-        let mut queue = self.control_queue
-            .disable_irq()
-            .lock();
+
+        let mut queue = self.control_queue.disable_irq().lock();
         let token = queue
-            .add_dma_buf(&[&req_slice], &[&resp_slice])
+            .add_dma_buf(&[&req_slice], &mut [&resp_slice])
             .expect("add queue failed");
+
         if queue.should_notify() {
             queue.notify();
         }
@@ -182,16 +180,14 @@ impl SoundDevice {
 
         resp_slice.sync().unwrap();
         let resp: VirtioSndHdr = resp_slice.read_val(0).unwrap();
-
         Ok(resp) //没有考虑报错
     }
 
     fn set_up(&mut self) -> Result<(), VirtioDeviceError> {
-
         // init pcm info
         let pcm_infos = self.pcm_info(0, self.config_manager.read_config().streams)?;
         for pcm_info in &pcm_infos {
-            info!("[sound device] pcm_info: {}", pcm_info);
+            early_println!("[sound device] pcm_info: {:?}", pcm_info)
         }
         self.pcm_infos = Some(pcm_infos);
 
@@ -213,11 +209,10 @@ impl SoundDevice {
         Ok(())
     }
 
-
     fn pcm_info(
         &mut self,
         stream_start_id: u32,
-        stream_count: u32,  // The number of streams that need to be queried
+        stream_count: u32, // The number of streams that need to be queried
     ) -> Result<Vec<VirtioSndPcmInfo>, VirtioDeviceError> {
         // Check if stream_dart_id+stream_comnt exceeds the number of streams supported by the device. If exceeded, return an error.
         if stream_start_id + stream_count > self.config_manager.read_config().streams {
@@ -232,18 +227,20 @@ impl SoundDevice {
             start_id: stream_start_id,
             count: stream_count,
             size: size_of::<VirtioSndPcmInfo>() as u32,
-        })?;// call self.request to send the request and get the response
-        if hdr != RequestStatusCode::Ok.into() { // if failed(not OK) then Error
+        })?; // call self.request to send the request and get the response
+        early_println!("A");
+        if hdr != RequestStatusCode::Ok.into() {
+            // if failed(not OK) then Error
+            early_println!("{:?}",hdr);
             return Err(VirtioDeviceError::IoError);
         }
         // read struct VirtIOSndPcmInfo
         let mut pcm_infos = vec![];
-        
-        
+
         for i in 0..stream_count as usize {
             const HDR_SIZE: usize = size_of::<VirtioSndHdr>();
             const PCM_INFO_SIZE: usize = size_of::<VirtioSndPcmInfo>();
-            let start_byte_idx = HDR_SIZE + i * PCM_INFO_SIZE;// 
+            let start_byte_idx = HDR_SIZE + i * PCM_INFO_SIZE; //
             let end_byte_idx = HDR_SIZE + (i + 1) * PCM_INFO_SIZE;
             if end_byte_idx > self.receive_buffer.nbytes() {
                 return Err(VirtioDeviceError::BufferOverflow);
@@ -255,7 +252,6 @@ impl SoundDevice {
             let pcm_info = VirtioSndPcmInfo::from_bytes(&buffer); // 解析数据
             pcm_infos.push(pcm_info);
         }
-
         /*
         -------------------------------------------------------
                  offset             |         content
@@ -275,8 +271,7 @@ impl SoundDevice {
         &mut self,
         chmaps_start_id: u32,
         chmaps_count: u32,
-    ) -> Result<Vec<VirtioSndChmapInfo>,VirtioDeviceError> {
-
+    ) -> Result<Vec<VirtioSndChmapInfo>, VirtioDeviceError> {
         //
         if chmaps_start_id + chmaps_count > self.config_manager.read_config().streams {
             error!("chmaps_start_id + chmaps_count > self.chmaps");
@@ -324,7 +319,7 @@ impl SoundDevice {
         channels: u8,
         format: PcmFormat,
         rate: PcmRate,
-    ) -> Result<(),VirtioDeviceError> {
+    ) -> Result<(), VirtioDeviceError> {
         if !self.set_up {
             self.set_up()?;
             self.set_up = true;
@@ -364,7 +359,7 @@ impl SoundDevice {
     }
 
     /// Prepare a stream with specified stream ID.
-    pub fn pcm_prepare(&mut self, stream_id: u32) -> Result<(),VirtioDeviceError>  {
+    pub fn pcm_prepare(&mut self, stream_id: u32) -> Result<(), VirtioDeviceError> {
         if !self.set_up {
             self.set_up()?;
             self.set_up = true;
@@ -383,7 +378,7 @@ impl SoundDevice {
     }
 
     /// Release a stream with specified stream ID.
-    pub fn pcm_release(&mut self, stream_id: u32) -> Result<(),VirtioDeviceError> {
+    pub fn pcm_release(&mut self, stream_id: u32) -> Result<(), VirtioDeviceError> {
         if !self.set_up {
             self.set_up()?;
             self.set_up = true;
@@ -402,7 +397,7 @@ impl SoundDevice {
     }
 
     /// Start a stream with specified stream ID.
-    pub fn pcm_start(&mut self, stream_id: u32) -> Result<(),VirtioDeviceError> {
+    pub fn pcm_start(&mut self, stream_id: u32) -> Result<(), VirtioDeviceError> {
         if !self.set_up {
             self.set_up()?;
             self.set_up = true;
@@ -421,7 +416,7 @@ impl SoundDevice {
     }
 
     /// Stop a stream with specified stream ID.
-    pub fn pcm_stop(&mut self, stream_id: u32) -> Result<(),VirtioDeviceError> {
+    pub fn pcm_stop(&mut self, stream_id: u32) -> Result<(), VirtioDeviceError> {
         if !self.set_up {
             self.set_up()?;
             self.set_up = true;
@@ -439,4 +434,66 @@ impl SoundDevice {
         }
     }
 
+    /// Transfer PCM frame to device, based on the stream type(OUTPUT/INPUT).
+    ///
+    /// Currently supports only output stream.
+    ///
+    /// This is a blocking method that will not return until the audio playback is complete.
+    pub fn pcm_xfer(&mut self, stream_id: u32, frames: &[u8]) -> Result<(), VirtioDeviceError> {
+        const U32_SIZE: usize = size_of::<u32>();
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        if !self.pcm_parameters[stream_id as usize].setup {
+            warn!("Please set parameters for a stream before using it!");
+            return Err(VirtioDeviceError::IoError);
+        }
+        let stream_id_bytes = stream_id.to_le_bytes();
+        let period_size = self.pcm_parameters[stream_id as usize].period_bytes as usize;
+
+        // 将 frames 字节数组按照 period_size 分割成多个小块
+        let mut remaining_buffers = frames.chunks(period_size);
+        // 初始化一个 Option 类型的缓冲区数组，存储当前可用的缓冲区
+        let mut buffers: [Option<&[u8]>; Self::QUEUE_SIZE as usize] =
+            [None; Self::QUEUE_SIZE as usize];
+        // 初始化 VirtIOSndPcmStatus 数组，用于存储每个缓冲区的状态
+        let mut statuses: [VirtioSndPcmStatus; Self::QUEUE_SIZE as usize] =
+            array::from_fn(|_| Default::default());
+        // 每个缓冲区的标识符（token），用于标识和管理缓冲区
+        let mut tokens = [0; Self::QUEUE_SIZE as usize];
+        // 缓冲区的头部与尾部
+        let mut head = 0;
+        let mut tail = 0;
+
+        // loop {
+        //     let mut queue = self.tx_queue.disable_irq().lock();
+        //     if queue.available_desc() >= 3 { // 为什么是3？
+        //         if let Some(buffer) = remaining_buffers.next() {
+        //             tokens[head] = {  // 为什么用unsafe
+        //                 let pcm_slice = {
+        //                     let pcm_slice =
+        //                         DmaStreamSlice::new(self.send_buffer.clone(), 0, stream_id_bytes.len() + 1); // 一个u8一个byte
+        //                     pcm_slice.write_val(0, &1).unwrap();
+        //                     pcm_slice
+        //                 };
+        //                 queue.add_dma_buf(
+        //                     &[&pcm_slice],
+        //                     &mut [statuses[head].as_mut_bytes()],
+        //                 )
+        //             }
+        //         }
+        //     }
+        // }
+
+        Ok(())
+    }
+}
+
+/// test the freaking Virtio sound device
+fn test_device(device: Arc<Mutex<SoundDevice>>) {
+    let cloned_device = Arc::clone(&device);
+    let mut device = cloned_device.lock();
+    early_println!("Config is {:?}", device.config_manager.read_config()); //Config is VirtioSoundConfig { jacks: 0, streams: 2, chmaps: 0, controls: 4294967295 }
+    device.set_up();
 }
