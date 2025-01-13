@@ -33,6 +33,7 @@ pub struct SoundDevice {
     event_queue: SpinLock<VirtQueue>,
     tx_queue: SpinLock<VirtQueue>,
     rx_queue: SpinLock<VirtQueue>,
+
     send_buffer: DmaStream,
     receive_buffer: DmaStream,
 
