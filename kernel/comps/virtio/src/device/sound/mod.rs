@@ -1,6 +1,5 @@
 pub mod config;
 pub mod device;
-pub mod stream;
 
 pub static DEVICE_NAME: &str = "Virtio-Sound";
 
