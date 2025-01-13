@@ -2,12 +2,14 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::{vec::Vec,vec};
 use alloc::{boxed::Box, sync::Arc};
 use core::hint::spin_loop;
+use core::ops::RangeInclusive;
 
 use config::{SoundFeatures, VirtioSoundConfig};
 use log::{debug, error, info, warn};
 use ostd::mm::VmIo;
 use ostd::Pod;
 use ostd::{early_println, sync::SpinLock};
+use crate::queue::QueueError;
 use crate::{
     device::VirtioDeviceError, queue::VirtQueue, transport::{ConfigManager, VirtioTransport}
 };
@@ -31,6 +33,7 @@ pub struct SoundDevice {
     event_queue: SpinLock<VirtQueue>,
     tx_queue: SpinLock<VirtQueue>,
     rx_queue: SpinLock<VirtQueue>,
+
     send_buffer: DmaStream,
     receive_buffer: DmaStream,
 
@@ -439,4 +442,90 @@ impl SoundDevice {
         }
     }
 
+    /// Get all output streams.
+    pub fn output_streams(&mut self) -> Result<Vec<u32>, VirtioDeviceError> {
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        Ok(self
+            .pcm_infos
+            .as_ref()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .filter(|(_, info)| info.direction == VIRTIO_SND_D_OUTPUT)
+            .map(|(idx, _)| idx as u32)
+            .collect())
+    }
+
+    /// Get all input streams.
+    pub fn input_streams(&mut self) -> Result<Vec<u32>, VirtioDeviceError> {
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        Ok(self
+            .pcm_infos
+            .as_ref()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .filter(|(_, info)| info.direction == VIRTIO_SND_D_INPUT)
+            .map(|(idx, _)| idx as u32)
+            .collect())
+    }
+
+    /// Get the rates that a stream supports.
+    pub fn rates_supported(&mut self, stream_id: u32) -> Result<PcmRates,VirtioDeviceError> {
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        if stream_id >= self.pcm_infos.as_ref().unwrap().len() as u32 {
+            return Err(VirtioDeviceError::InvalidParam);
+        }
+        Ok(PcmRates::from_bits(
+            self.pcm_infos.as_ref().unwrap()[stream_id as usize].rates,
+        ).unwrap())
+    }
+    
+    /// Get the formats that a stream supports.
+    pub fn formats_supported(&mut self, stream_id: u32) -> Result<PcmFormats,VirtioDeviceError> {
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        if stream_id >= self.pcm_infos.as_ref().unwrap().len() as u32 {
+            return Err(VirtioDeviceError::InvalidParam);
+        }
+        Ok(PcmFormats::from_bits(
+            self.pcm_infos.as_ref().unwrap()[stream_id as usize].formats,
+        ).unwrap())
+    }
+
+    /// Get channel range that a stream supports.
+    pub fn channel_range_supported(&mut self, stream_id: u32) -> Result<RangeInclusive<u8>,VirtioDeviceError> {
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        if stream_id >= self.pcm_infos.as_ref().unwrap().len() as u32 {
+            return Err(VirtioDeviceError::InvalidParam);
+        }
+        let pcm_info = &self.pcm_infos.as_ref().unwrap()[stream_id as usize];
+        Ok(pcm_info.channels_min..=pcm_info.channels_max)
+    }
+
+    pub fn features_supported(&mut self, stream_id: u32) -> Result<PcmFeatures,VirtioDeviceError> {
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        if stream_id >= self.pcm_infos.as_ref().unwrap().len() as u32 {
+            return Err(VirtioDeviceError::InvalidParam);
+        }
+        let pcm_info = &self.pcm_infos.as_ref().unwrap()[stream_id as usize];
+        Ok(PcmFeatures::from_bits(pcm_info.features).unwrap())
+    }
 }
