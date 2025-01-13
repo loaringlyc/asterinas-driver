@@ -106,6 +106,7 @@ fn negotiate_features(transport: &mut Box<dyn VirtioTransport>) {
         VirtioDeviceType::Input => InputDevice::negotiate_features(device_specified_features),
         VirtioDeviceType::Console => ConsoleDevice::negotiate_features(device_specified_features),
         VirtioDeviceType::Socket => SocketDevice::negotiate_features(device_specified_features),
+        VirtioDeviceType::Sound => SoundDevice::negotiate_features(device_specified_features),
         _ => device_specified_features,
     };
     let mut support_feature = Feature::from_bits_truncate(features);

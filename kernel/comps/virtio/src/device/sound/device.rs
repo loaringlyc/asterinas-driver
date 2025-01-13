@@ -1,14 +1,14 @@
+use core::hint::spin_loop;
+
 use alloc::{boxed::Box, sync::Arc};
 
 use config::{SoundFeatures, VirtioSoundConfig};
 use log::debug;
-use ostd::{early_println, sync::SpinLock};
+use ostd::{early_println, mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, HasDaddr, VmIo}, sync::SpinLock};
 
-use super::config;
+use super::*;
 use crate::{
-    device::VirtioDeviceError,
-    queue::VirtQueue,
-    transport::{ConfigManager, VirtioTransport},
+    device::VirtioDeviceError, queue::{QueueError, VirtQueue}, transport::{ConfigManager, VirtioTransport}
 };
 
 pub struct SoundDevice {
@@ -23,12 +23,19 @@ pub struct SoundDevice {
     event_queue: SpinLock<VirtQueue>,
     tx_queue: SpinLock<VirtQueue>,
     rx_queue: SpinLock<VirtQueue>,
+    // Send buffer for queue.
+    snd_req: DmaStream,     
+    // Recv buffer for queue.
+    snd_resp: DmaStream,    
 }
 
+const SND_HDR_SIZE: usize = size_of::<VirtioSndHdr>();
+
 impl SoundDevice {
+    const QUEUE_SIZE: u16 = 2;
     pub fn negotiate_features(features: u64) -> u64 {
         let features = SoundFeatures::from_bits_truncate(features);
-        //
+        // TODO: Implement negotiate!
         features.bits()
     }
 
@@ -55,13 +62,23 @@ impl SoundDevice {
         const TXQ_INDEX: u16 = 2;
         const RXQ_INDEX: u16 = 3;
         let control_queue = 
-            SpinLock::new(VirtQueue::new(CONTROLQ_INDEX, 2, transport.as_mut())?);
+            SpinLock::new(VirtQueue::new(CONTROLQ_INDEX, Self::QUEUE_SIZE, transport.as_mut())?);
         let event_queue = 
-            SpinLock::new(VirtQueue::new(EVENTQ_INDEX, 2, transport.as_mut())?);
+            SpinLock::new(VirtQueue::new(EVENTQ_INDEX, Self::QUEUE_SIZE, transport.as_mut())?);
         let tx_queue = 
-            SpinLock::new(VirtQueue::new(TXQ_INDEX, 2, transport.as_mut())?);
+            SpinLock::new(VirtQueue::new(TXQ_INDEX, Self::QUEUE_SIZE, transport.as_mut())?);
         let rx_queue = 
-            SpinLock::new(VirtQueue::new(RXQ_INDEX, 2, transport.as_mut())?);
+            SpinLock::new(VirtQueue::new(RXQ_INDEX, Self::QUEUE_SIZE, transport.as_mut())?);
+        
+        let snd_req = {
+            let segment = FrameAllocOptions::new().alloc_segment(1).unwrap();
+            DmaStream::map(segment.into(), DmaDirection::Bidirectional, false).unwrap()
+        };
+
+        let snd_resp = {
+            let segment = FrameAllocOptions::new().alloc_segment(1).unwrap();
+            DmaStream::map(segment.into(), DmaDirection::Bidirectional, false).unwrap()
+        };
 
         let device = Arc::new(SoundDevice {
             config_manager,
@@ -70,11 +87,13 @@ impl SoundDevice {
             event_queue,
             tx_queue,
             rx_queue,
+            snd_req,
+            snd_resp,
         });
 
         // Register irq callbacks
         let mut transport = device.transport.disable_irq().lock();
-        
+        // TODO: callbacks for microphone input
 
         transport.finish_init();
         drop(transport);
@@ -82,4 +101,43 @@ impl SoundDevice {
 
         Ok(())
     }
+
+    fn request<Req: Pod>(&mut self, req: Req) -> Result<VirtioSndHdr, QueueError>{
+        // 参数req表示一个request结构体，存放request信息，如VirtIOSndQueryInfo 
+        // 这里的Pod trait可以保证可转换为一连串bytes，然后就可以用len的到长度了
+        let req_slice = {
+            let req_slice = 
+                DmaStreamSlice::new(&self.snd_req, 0, req.as_bytes().len());
+            req_slice.write_val(0, &req).unwrap();
+            req_slice.sync().unwrap();
+            req_slice
+        }; // 将req写入snd_req这个DmaStream
+
+        let resp_slice = {
+            let resp_slice = 
+                DmaStreamSlice::new(&self.snd_resp, 0, SND_HDR_SIZE);
+            resp_slice
+        }; // 希望写入snd_resp这个DmaStream的前面 （目前只预留 返回一个最基础的OK或者ERR 的长度）
+        
+        let mut queue = self.control_queue
+            .disable_irq()
+            .lock();
+        let token = queue
+            .add_dma_buf(&[&req_slice], &[&resp_slice])
+            .expect("add queue failed");
+        if queue.should_notify() {
+            queue.notify();
+        }
+        while !queue.can_pop() {
+            spin_loop();
+        }
+        queue.pop_used_with_token(token).expect("pop used failed");
+
+        resp_slice.sync().unwrap();
+        let resp: VirtioSndHdr = resp_slice.read_val(0).unwrap();
+
+        Ok(resp) //没有考虑报错
+    }
+
 }
+
