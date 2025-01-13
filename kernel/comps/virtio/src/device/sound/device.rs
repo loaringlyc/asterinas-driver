@@ -29,8 +29,6 @@ pub struct SoundDevice {
     snd_resp: DmaStream,    
 }
 
-const SND_HDR_SIZE: usize = size_of::<VirtioSndHdr>();
-
 impl SoundDevice {
     const QUEUE_SIZE: u16 = 2;
     pub fn negotiate_features(features: u64) -> u64 {
@@ -102,7 +100,7 @@ impl SoundDevice {
         Ok(())
     }
 
-    fn request<Req: Pod>(&mut self, req: Req) -> Result<VirtioSndHdr, QueueError>{
+    fn request<Req: Pod>(&mut self, req: Req) -> Result<VirtioSndHdr, VirtioDeviceError>{
         // 参数req表示一个request结构体，存放request信息，如VirtIOSndQueryInfo 
         // 这里的Pod trait可以保证可转换为一连串bytes，然后就可以用len的到长度了
         let req_slice = {
@@ -137,6 +135,17 @@ impl SoundDevice {
         let resp: VirtioSndHdr = resp_slice.read_val(0).unwrap();
 
         Ok(resp) //没有考虑报错
+    }
+
+    /// Transfer PCM frame to device, based on the stream type(OUTPUT/INPUT).
+    ///
+    /// Currently supports only output stream.
+    ///
+    /// This is a blocking method that will not return until the audio playback is complete.
+    pub fn pcm_xfer(&mut self, stream_id: u32, frames: &[u8]) -> Result<(), VirtioDeviceError> {
+        const U32_SIZE: usize = size_of::<u32>();
+        // set up & set params
+        Ok(())
     }
 
 }

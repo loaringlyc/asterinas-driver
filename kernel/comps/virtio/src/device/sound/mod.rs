@@ -61,7 +61,7 @@ pub const VIRTIO_SND_PCM_F_EVT_SHMEM_PERIODS: u8 = 3;   // supports elapsed peri
 pub const VIRTIO_SND_PCM_F_EVT_XRUNS: u8 = 4;           // supports underrun/overrun notifications
 
 // supported PCM sample formats
-//   analog formats (width / physical width)
+// analog formats (width / physical width)
 pub const VIRTIO_SND_PCM_FMT_IMA_ADPCM: u8 = 0;
 pub const VIRTIO_SND_PCM_FMT_MU_LAW: u8 = 1;
 pub const VIRTIO_SND_PCM_FMT_A_LAW: u8 = 2;
@@ -158,6 +158,8 @@ pub struct VirtioSndHdr {
     pub code: u32 
 }
 
+const SND_HDR_SIZE: usize = size_of::<VirtioSndHdr>();
+
 /// Virtio Sound event notification
 #[derive(Debug, Clone, Copy, Pod)]
 #[repr(C)]
@@ -236,6 +238,17 @@ pub struct VirtioSndPcmInfo {
 
     pub padding: [u8; 5],
 }
+
+// #[derive(Clone, Debug, Default, Eq, PartialEq)]
+// struct PcmParameters {
+//     setup: bool,
+//     buffer_bytes: u32,
+//     period_bytes: u32,
+//     features: ,
+//     channels: u8,
+//     format: PcmFormat,
+//     rate: PcmRate,
+// }
 
 /// Set selected stream parameters for the specified stream ID
 #[derive(Debug, Clone, Copy, Pod)]
