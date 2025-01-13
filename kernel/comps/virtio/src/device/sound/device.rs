@@ -129,12 +129,6 @@ impl SoundDevice {
 
         transport.finish_init();
 
-        let e_queue=event_queue.disable_irq().lock();
-        if e_queue.should_notify() {
-            debug!("notify event queue");
-            e_queue.notify();
-        }
-
         drop(transport);
         
 
@@ -248,7 +242,7 @@ impl SoundDevice {
         for i in 0..stream_count as usize {
             const HDR_SIZE: usize = size_of::<VirtioSndHdr>();
             const PCM_INFO_SIZE: usize = size_of::<VirtioSndPcmInfo>();
-            let start_byte_idx = HDR_SIZE + i * PCM_INFO_SIZE;
+            let start_byte_idx = HDR_SIZE + i * PCM_INFO_SIZE;// 
             let end_byte_idx = HDR_SIZE + (i + 1) * PCM_INFO_SIZE;
             if end_byte_idx > self.receive_buffer.nbytes() {
                 return Err(VirtioDeviceError::BufferOverflow);
@@ -260,6 +254,18 @@ impl SoundDevice {
             let pcm_info = VirtioSndPcmInfo::from_bytes(&buffer); // 解析数据
             pcm_infos.push(pcm_info);
         }
+
+        /*
+        -------------------------------------------------------
+                 offset             |         content
+        -------------------------------------------------------
+                   0                |          Header
+        -------------------------------------------------------
+                 HDR_SIZE           |     The first PCM info
+        -------------------------------------------------------
+          HDR_SIZE + PCM_INFO_SIZE  |     The second PCM info
+        -------------------------------------------------------
+         */
         Ok(pcm_infos)
     }
 
