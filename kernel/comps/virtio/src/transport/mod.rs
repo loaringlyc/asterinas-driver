@@ -21,6 +21,7 @@ use crate::{
 
 pub mod mmio;
 pub mod pci;
+pub mod fake;
 
 /// The transport of virtio device. Virtio device can use this transport to:
 /// 1. Set device status.
