@@ -3,7 +3,7 @@ pub mod device;
 
 pub static DEVICE_NAME: &str = "Virtio-Sound";
 
-use core::{fmt::{self, Display, Formatter}};
+use core::fmt::{self, Display, Formatter};
 use alloc::fmt::Debug;
 use bitflags::bitflags;
 use ostd::Pod;
