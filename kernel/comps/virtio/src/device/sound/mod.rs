@@ -4,8 +4,9 @@ pub mod fake;
 
 pub static DEVICE_NAME: &str = "Virtio-Sound";
 
-use core::fmt::{self, Display, Formatter};
 use alloc::fmt::Debug;
+use core::fmt::{self, Display, Formatter};
+
 use bitflags::bitflags;
 use ostd::Pod;
 // jack control request types
@@ -43,11 +44,11 @@ pub const VIRTIO_SND_EVT_PCM_XRUN: u32 = 0x1101;
 // control element event types
 pub const VIRTIO_SND_EVT_CTL_NOTIFY: u32 = 0x1200;
 
-// common status codes 
-pub const VIRTIO_SND_S_OK: u32 = 0x8000;        // success
-pub const VIRTIO_SND_S_BAD_MSG: u32 = 0x8001;   // a control message is malformed or contains invalid parameters
-pub const VIRTIO_SND_S_NOT_SUPP: u32 = 0x8002;  // requested operation or parameters are not supported
-pub const VIRTIO_SND_S_IO_ERR: u32 = 0x8003;    // an I/O error occurred
+// common status codes
+pub const VIRTIO_SND_S_OK: u32 = 0x8000; // success
+pub const VIRTIO_SND_S_BAD_MSG: u32 = 0x8001; // a control message is malformed or contains invalid parameters
+pub const VIRTIO_SND_S_NOT_SUPP: u32 = 0x8002; // requested operation or parameters are not supported
+pub const VIRTIO_SND_S_IO_ERR: u32 = 0x8003; // an I/O error occurred
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(u32)]
@@ -61,28 +62,24 @@ pub enum RequestStatusCode {
 
 impl From<RequestStatusCode> for VirtioSndHdr {
     fn from(value: RequestStatusCode) -> Self {
-        VirtioSndHdr {
-            code: value as _,
-        }
+        VirtioSndHdr { code: value as _ }
     }
 }
 
 /// Virtio Sound Request / Response common header
-#[derive(Debug, Clone, Copy, Pod,Eq,PartialEq)]
+#[derive(Debug, Clone, Copy, Pod, Eq, PartialEq)]
 #[repr(C)]
 pub struct VirtioSndHdr {
     /// specifies a device request type (VIRTIO_SND_R_*) / response status (VIRTIO_SND_S_*)
     /// p.s. use u32 to represent le32
-    pub code: u32 
+    pub code: u32,
 }
 
 const SND_HDR_SIZE: usize = size_of::<VirtioSndHdr>();
 
 impl From<CommandCode> for VirtioSndHdr {
     fn from(value: CommandCode) -> Self {
-        VirtioSndHdr {
-            code: value.into(),
-        }
+        VirtioSndHdr { code: value.into() }
     }
 }
 
@@ -90,8 +87,8 @@ impl From<CommandCode> for VirtioSndHdr {
 #[derive(Debug, Clone, Copy, Pod)]
 #[repr(C)]
 pub struct VirtioSndEvent {
-    pub header: VirtioSndHdr,  // indicates an event type (VIRTIO_SND_EVT_*)
-    pub data: u32              // indicates an optional event data
+    pub header: VirtioSndHdr, // indicates an event type (VIRTIO_SND_EVT_*)
+    pub data: u32,            // indicates an optional event data
 }
 
 /// The notification type.
@@ -187,18 +184,15 @@ impl From<CommandCode> for u32 {
     }
 }
 
-
-
 /// Virtio Sound request information about any kind of configuration item (A special control message)
 #[derive(Debug, Clone, Copy, Pod)]
 #[repr(C)]
 pub struct VirtioSndQueryInfo {
-    pub hdr: VirtioSndHdr,  // a particular item request type (VIRTIO_SND_R_*_INFO)
-    pub start_id: u32,         // starting identifier for the item
-    pub count: u32,            // number of items for which information is requested
-    pub size: u32              // size of the structure containing information for one item
+    pub hdr: VirtioSndHdr, // a particular item request type (VIRTIO_SND_R_*_INFO)
+    pub start_id: u32,     // starting identifier for the item
+    pub count: u32,        // number of items for which information is requested
+    pub size: u32,         // size of the structure containing information for one item
 }
-
 
 #[derive(Debug, Clone, Copy, Pod)]
 #[repr(C)]
@@ -208,13 +202,11 @@ struct VirtIOSndQueryInfoRsp {
 }
 
 /// Virtio Sound response common information header
-#[derive(Debug, Clone, Copy, Pod,Eq,PartialEq)]
+#[derive(Debug, Clone, Copy, Pod, Eq, PartialEq)]
 #[repr(C)]
 pub struct VirtioSndInfo {
-    pub hda_fn_nid: u32   // a function group node identifier (Used to link together different types of resources)
+    pub hda_fn_nid: u32, // a function group node identifier (Used to link together different types of resources)
 }
-
-
 
 // supported PCM stream features
 // #[derive(Copy, Clone, Debug, Eq, PartialEq,Default)]
@@ -226,8 +218,6 @@ pub struct VirtioSndInfo {
 //     VIRTIO_SND_PCM_F_EVT_SHMEM_PERIODS= 3,   // supports elapsed period notifications for shared memory transport
 //     VIRTIO_SND_PCM_F_EVT_XRUNS= 4          // supports underrun/overrun notifications
 // }
-
-
 
 bitflags! {
     /// Supported PCM stream features.
@@ -412,7 +402,7 @@ impl From<PcmFormat> for u8 {
 #[repr(C)]
 pub struct VirtioSndPcmHdr {
     pub hdr: VirtioSndHdr, // request type (VIRTIO_SND_R_PCM_*)
-    pub stream_id: u32        // PCM stream identifier from 0 to streams - 1
+    pub stream_id: u32,    // PCM stream identifier from 0 to streams - 1
 }
 
 // supported PCM frame rates
@@ -514,18 +504,17 @@ impl From<PcmRate> for u8 {
     }
 }
 
-
 /// PCM response information
-#[derive(Clone, Copy, Pod,Eq,PartialEq)]
+#[derive(Clone, Copy, Pod, Eq, PartialEq)]
 #[repr(C)]
 pub struct VirtioSndPcmInfo {
     pub hdr: VirtioSndInfo,
-    pub features: u32,      // a bit map of the supported features /* 1 << VIRTIO_SND_PCM_F_XXX */
-    pub formats: u64,       // supported sample format bit map /* 1 << VIRTIO_SND_PCM_FMT_XXX */
-    pub rates: u64,         // supported frame rate bit map /* 1 << VIRTIO_SND_PcmRate_XXX */
-    pub direction: u8,      // the direction of data flow (VIRTIO_SND_D_*)
-    pub channels_min: u8,   // minimum number of supported channels
-    pub channels_max: u8,   // maximum number of supported channels
+    pub features: u32, // a bit map of the supported features /* 1 << VIRTIO_SND_PCM_F_XXX */
+    pub formats: u64,  // supported sample format bit map /* 1 << VIRTIO_SND_PCM_FMT_XXX */
+    pub rates: u64,    // supported frame rate bit map /* 1 << VIRTIO_SND_PcmRate_XXX */
+    pub direction: u8, // the direction of data flow (VIRTIO_SND_D_*)
+    pub channels_min: u8, // minimum number of supported channels
+    pub channels_max: u8, // maximum number of supported channels
 
     pub padding: [u8; 5],
 }
@@ -576,9 +565,7 @@ pub enum ItemInformationRequestType {
 
 impl From<ItemInformationRequestType> for VirtioSndHdr {
     fn from(value: ItemInformationRequestType) -> Self {
-        VirtioSndHdr {
-            code: value.into(),
-        }
+        VirtioSndHdr { code: value.into() }
     }
 }
 
@@ -630,18 +617,17 @@ pub const VIRTIO_SND_CHMAP_BRC: u8 = 40; /* bottom right center */
 // maximum possible number of channels
 pub const VIRTIO_SND_CHMAP_MAX_SIZE: usize = 18;
 
-
 /// Set selected stream parameters for the specified stream ID
 #[derive(Debug, Clone, Copy, Pod)]
 #[repr(C)]
 pub struct VirtioSndPcmSetParams {
-    pub hdr: VirtioSndPcmHdr, // 
-    pub buffer_bytes: u32,   // the size of the hardware buffer used by the driver
-    pub period_bytes: u32,   // the size of the hardware period used by the driver
-    pub features: u32,       // specifies a selected feature bit map /* 1 << VIRTIO_SND_PCM_F_XXX */
-    pub channels: u8,        // a selected number of channels
-    pub format: u8,          // a selected sample format (VIRTIO_SND_PCM_FMT_*).
-    pub rate: u8,            // a selected frame rate (VIRTIO_SND_PcmRate_*).
+    pub hdr: VirtioSndPcmHdr, //
+    pub buffer_bytes: u32,    // the size of the hardware buffer used by the driver
+    pub period_bytes: u32,    // the size of the hardware period used by the driver
+    pub features: u32, // specifies a selected feature bit map /* 1 << VIRTIO_SND_PCM_F_XXX */
+    pub channels: u8,  // a selected number of channels
+    pub format: u8,    // a selected sample format (VIRTIO_SND_PCM_FMT_*).
+    pub rate: u8,      // a selected frame rate (VIRTIO_SND_PcmRate_*).
     pub padding: u8,
 }
 
@@ -649,15 +635,15 @@ pub struct VirtioSndPcmSetParams {
 #[derive(Debug, Clone, Copy, Pod)]
 #[repr(C)]
 pub struct VirtioSndPcmXfer {
-    pub stream_id: u32,      // a PCM stream identifier from 0 to streams - 1
+    pub stream_id: u32, // a PCM stream identifier from 0 to streams - 1
 }
 
 /// PCM I/O status
-#[derive(Debug, Clone, Copy, Pod)]
+#[derive(Debug, Clone, Copy, Pod, Default)]
 #[repr(C)]
 pub struct VirtioSndPcmStatus {
-    pub status: u32,         // contains VIRTIO_SND_S_OK if an operation is successful, and VIRTIO_SND_S_IO_ERR otherwise.
-    pub latency_bytes: u32,  // indicates the current device latency
+    pub status: u32, // contains VIRTIO_SND_S_OK if an operation is successful, and VIRTIO_SND_S_IO_ERR otherwise.
+    pub latency_bytes: u32, // indicates the current device latency
 }
 
 // channel maps response information
@@ -665,9 +651,9 @@ pub struct VirtioSndPcmStatus {
 #[repr(C)]
 pub struct VirtioSndChmapInfo {
     pub hdr: VirtioSndInfo,
-    pub direction: u8,       // the direction of data flow (VIRTIO_SND_D_*)
-    pub channels: u8,        // the number of valid channel position values
-    pub positions: [u8; VIRTIO_SND_CHMAP_MAX_SIZE],  //channel position values (VIRTIO_SND_CHMAP_*)
+    pub direction: u8, // the direction of data flow (VIRTIO_SND_D_*)
+    pub channels: u8,  // the number of valid channel position values
+    pub positions: [u8; VIRTIO_SND_CHMAP_MAX_SIZE], //channel position values (VIRTIO_SND_CHMAP_*)
 }
 
 impl Display for VirtioSndChmapInfo {
@@ -687,10 +673,10 @@ impl Display for VirtioSndChmapInfo {
                 write!(f, ", ")?;
             }
             match ChannelPosition::try_from(self.positions[i]) {
-                Ok(position)=>{
+                Ok(position) => {
                     write!(f, "{:?}", position)?;
-                },
-                Err(_)=>{
+                }
+                Err(_) => {
                     write!(f, "{}", self.positions[i])?;
                 }
             }
@@ -700,7 +686,7 @@ impl Display for VirtioSndChmapInfo {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq,Default)]
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub struct PcmParameters {
     setup: bool,
     buffer_bytes: u32,
@@ -831,12 +817,11 @@ impl TryFrom<u8> for ChannelPosition {
             33 => Ok(ChannelPosition::Bc),
             34 => Ok(ChannelPosition::Blc),
             35 => Ok(ChannelPosition::Brc),
-            
+
             _ => Err(()),
         }
     }
 }
-
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub enum PCMState {
