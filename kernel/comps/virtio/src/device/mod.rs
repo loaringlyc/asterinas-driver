@@ -49,6 +49,12 @@ pub enum VirtioDeviceError {
     QueueUnknownError,
     /// The input virtio capability list contains invalid element
     CapabilityListError,
+    /// I/O error
+    IoError,
+    /// BufferOverflow
+    BufferOverflow,
+    /// Invalid parameter.
+    InvalidParam,
 }
 
 impl From<QueueError> for VirtioDeviceError {

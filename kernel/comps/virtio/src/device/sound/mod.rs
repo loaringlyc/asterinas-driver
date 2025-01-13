@@ -398,8 +398,8 @@ impl From<PCM_FORMAT> for PCM_FORMATS {
     }
 }
 
-impl From<PCM_FORMAT> for u64 {
-    fn from(format: PCM_FORMAT) -> u64 {
+impl From<PCM_FORMAT> for u8 {
+    fn from(format: PCM_FORMAT) -> u8 {
         format as _
     }
 }
@@ -408,7 +408,7 @@ impl From<PCM_FORMAT> for u64 {
 #[derive(Debug, Clone, Copy, Pod)]
 #[repr(C)]
 pub struct VirtioSndPcmHdr {
-    pub header: VirtioSndHdr, // request type (VIRTIO_SND_R_PCM_*)
+    pub hdr: VirtioSndHdr, // request type (VIRTIO_SND_R_PCM_*)
     pub stream_id: u32        // PCM stream identifier from 0 to streams - 1
 }
 

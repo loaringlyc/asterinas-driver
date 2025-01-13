@@ -271,4 +271,54 @@ impl SoundDevice {
         }
         Ok(chmap_infos)
     }
+
+    pub fn pcm_set_params(
+        &mut self,
+        stream_id: u32,
+        buffer_bytes: u32,
+        period_bytes: u32,
+        features: PCM_FEATURES,
+        channels: u8,
+        format: PCM_FORMAT,
+        rate: PCM_RATE,
+    ) -> Result<(),VirtioDeviceError> {
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        if period_bytes == 0 || period_bytes > buffer_bytes || buffer_bytes % period_bytes != 0 {
+            return Err(VirtioDeviceError::InvalidParam);
+        }
+        let request_hdr = VirtioSndHdr::from(CommandCode::RPcmSetParams);
+        let rsp = self.request(VirtioSndPcmSetParams {
+            hdr: VirtioSndPcmHdr {
+                hdr: request_hdr,
+                stream_id,
+            },
+            buffer_bytes,
+            period_bytes,
+            features: features.bits(),
+            channels,
+            format: format.into(),
+            rate: rate.into(),
+            padding: 0,
+        })?;
+        // rsp is just a header, so it can be compared with VirtIOSndHdr
+        if rsp == VirtioSndHdr::from(RequestStatusCode::Ok) {
+            self.pcm_parameters[stream_id as usize] = PcmParameters {
+                setup: true,
+                buffer_bytes,
+                period_bytes,
+                features,
+                channels,
+                format,
+                rate,
+            };
+            Ok(())
+        } else {
+            Err(VirtioDeviceError::IoError)
+        }
+    }
+
+
 }
