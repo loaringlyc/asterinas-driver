@@ -1,19 +1,18 @@
 use alloc::collections::btree_map::BTreeMap;
 use alloc::{vec::Vec,vec};
 use alloc::{boxed::Box, sync::Arc};
+use core::hint::spin_loop;
 
 use config::{SoundFeatures, VirtioSoundConfig};
 use log::{debug, error, info, warn};
+use ostd::mm::VmIo;
 use ostd::Pod;
 use ostd::{early_println, sync::SpinLock};
-
+use crate::{
+    device::VirtioDeviceError, queue::{QueueError, VirtQueue}, transport::{ConfigManager, VirtioTransport}
+};
 use super::config;
 use super::*;
-use crate::{
-    device::VirtioDeviceError,
-    queue::VirtQueue,
-    transport::{ConfigManager, VirtioTransport},
-};
 use ostd::{
     mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmReader},
     sync::{LocalIrqDisabled, RwLock},
@@ -155,8 +154,41 @@ impl SoundDevice {
     // }
 
 
-    fn request<Req>(&mut self, req: Req) -> Result<VirtioSndHdr,VirtioDeviceError>{
-        todo!()
+    fn request<Req: Pod>(&mut self, req: Req) -> Result<VirtioSndHdr, VirtioDeviceError>{
+        // 参数req表示一个request结构体，存放request信息，如VirtIOSndQueryInfo 
+        // 这里的Pod trait可以保证可转换为一连串bytes，然后就可以用len的到长度了
+        let req_slice = {
+            let req_slice = 
+                DmaStreamSlice::new(&self.send_buffer, 0, req.as_bytes().len());
+            req_slice.write_val(0, &req).unwrap();
+            req_slice.sync().unwrap();
+            req_slice
+        }; // 将req写入snd_req这个DmaStream
+
+        let resp_slice = {
+            let resp_slice = 
+                DmaStreamSlice::new(&self.receive_buffer, 0, SND_HDR_SIZE);
+            resp_slice
+        }; // 希望写入snd_resp这个DmaStream的前面 （目前只预留 返回一个最基础的OK或者ERR 的长度）
+        
+        let mut queue = self.control_queue
+            .disable_irq()
+            .lock();
+        let token = queue
+            .add_dma_buf(&[&req_slice], &[&resp_slice])
+            .expect("add queue failed");
+        if queue.should_notify() {
+            queue.notify();
+        }
+        while !queue.can_pop() {
+            spin_loop();
+        }
+        queue.pop_used_with_token(token).expect("pop used failed");
+
+        resp_slice.sync().unwrap();
+        let resp: VirtioSndHdr = resp_slice.read_val(0).unwrap();
+
+        Ok(resp) //没有考虑报错
     }
 
     fn set_up(&mut self) -> Result<(), VirtioDeviceError> {
@@ -190,24 +222,28 @@ impl SoundDevice {
     fn pcm_info(
         &mut self,
         stream_start_id: u32,
-        stream_count: u32,
+        stream_count: u32,  // The number of streams that need to be queried
     ) -> Result<Vec<VirtioSndPcmInfo>, VirtioDeviceError> {
+        // Check if stream_dart_id+stream_comnt exceeds the number of streams supported by the device. If exceeded, return an error.
         if stream_start_id + stream_count > self.config_manager.read_config().streams {
             error!("stream_start_id + stream_count > streams! There are not enough streams to be queried!");
             return Err(VirtioDeviceError::IoError);
         }
+
+        // Construct a request header
         let request_hdr = VirtioSndHdr::from(ItemInformationRequestType::RPcmInfo);
         let hdr = self.request(VirtioSndQueryInfo {
             hdr: request_hdr,
             start_id: stream_start_id,
             count: stream_count,
             size: size_of::<VirtioSndPcmInfo>() as u32,
-        })?;
-        if hdr != RequestStatusCode::Ok.into() {
+        })?;// call self.request to send the request and get the response
+        if hdr != RequestStatusCode::Ok.into() { // if failed(not OK) then Error
             return Err(VirtioDeviceError::IoError);
         }
         // read struct VirtIOSndPcmInfo
         let mut pcm_infos = vec![];
+        
         
         for i in 0..stream_count as usize {
             const HDR_SIZE: usize = size_of::<VirtioSndHdr>();
@@ -219,10 +255,6 @@ impl SoundDevice {
             }
             let reader = self.receive_buffer.reader().unwrap();
             let mut reader = reader.skip(start_byte_idx).limit(PCM_INFO_SIZE);
-            // let pcm_info = VirtioSndPcmInfo::from_bytes(
-            //     &self.receive_buffer[start_byte_idx..end_byte_idx],
-            // )
-            // .unwrap();
             let mut buffer = [0u8; size_of::<VirtioSndPcmInfo>()];
             reader.read(&mut buffer.as_mut_slice().into()); // 读取数据到缓冲区
             let pcm_info = VirtioSndPcmInfo::from_bytes(&buffer); // 解析数据
@@ -237,10 +269,14 @@ impl SoundDevice {
         chmaps_start_id: u32,
         chmaps_count: u32,
     ) -> Result<Vec<VirtioSndChmapInfo>,VirtioDeviceError> {
+
+        //
         if chmaps_start_id + chmaps_count > self.config_manager.read_config().streams {
             error!("chmaps_start_id + chmaps_count > self.chmaps");
             return Err(VirtioDeviceError::IoError);
         }
+
+        // Construct a request header
         let hdr = self.request(VirtioSndQueryInfo {
             hdr: ItemInformationRequestType::RChmapInfo.into(),
             start_id: chmaps_start_id,
@@ -320,5 +356,80 @@ impl SoundDevice {
         }
     }
 
+    /// Prepare a stream with specified stream ID.
+    pub fn pcm_prepare(&mut self, stream_id: u32) -> Result<(),VirtioDeviceError>  {
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        let request_hdr = VirtioSndHdr::from(CommandCode::RPcmPrepare);
+        let rsp = self.request(VirtioSndPcmHdr {
+            hdr: request_hdr,
+            stream_id,
+        })?;
+        // rsp is just a header, so it can be compared with VirtIOSndHdr
+        if rsp == VirtioSndHdr::from(RequestStatusCode::Ok) {
+            Ok(())
+        } else {
+            Err(VirtioDeviceError::IoError)
+        }
+    }
+
+    /// Release a stream with specified stream ID.
+    pub fn pcm_release(&mut self, stream_id: u32) -> Result<(),VirtioDeviceError> {
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        let request_hdr = VirtioSndHdr::from(CommandCode::RPcmRelease);
+        let rsp = self.request(VirtioSndPcmHdr {
+            hdr: request_hdr,
+            stream_id,
+        })?;
+        // rsp is just a header, so it can be compared with VirtIOSndHdr
+        if rsp == VirtioSndHdr::from(RequestStatusCode::Ok) {
+            Ok(())
+        } else {
+            Err(VirtioDeviceError::IoError)
+        }
+    }
+
+    /// Start a stream with specified stream ID.
+    pub fn pcm_start(&mut self, stream_id: u32) -> Result<(),VirtioDeviceError> {
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        let request_hdr = VirtioSndHdr::from(CommandCode::RPcmStart);
+        let rsp = self.request(VirtioSndPcmHdr {
+            hdr: request_hdr,
+            stream_id,
+        })?;
+        // rsp is just a header, so it can be compared with VirtIOSndHdr
+        if rsp == VirtioSndHdr::from(RequestStatusCode::Ok) {
+            Ok(())
+        } else {
+            Err(VirtioDeviceError::IoError)
+        }
+    }
+
+    /// Stop a stream with specified stream ID.
+    pub fn pcm_stop(&mut self, stream_id: u32) -> Result<(),VirtioDeviceError> {
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        let request_hdr = VirtioSndHdr::from(CommandCode::RPcmStop);
+        let rsp = self.request(VirtioSndPcmHdr {
+            hdr: request_hdr,
+            stream_id,
+        })?;
+        // rsp is just a header, so it can be compared with VirtIOSndHdr
+        if rsp == VirtioSndHdr::from(RequestStatusCode::Ok) {
+            Ok(())
+        } else {
+            Err(VirtioDeviceError::IoError)
+        }
+    }
 
 }

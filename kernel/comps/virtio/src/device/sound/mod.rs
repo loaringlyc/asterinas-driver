@@ -708,6 +708,8 @@ pub struct PcmParameters {
     rate: PCM_RATE,
 }
 
+const SND_HDR_SIZE: usize = size_of::<VirtioSndHdr>();
+
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
