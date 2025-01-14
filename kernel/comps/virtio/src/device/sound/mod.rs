@@ -3,7 +3,7 @@ pub mod device;
 
 pub static DEVICE_NAME: &str = "Virtio-Sound";
 
-use alloc::fmt::Debug;
+use alloc::{fmt::Debug, vec::Vec};
 use core::fmt::{self, Display, Formatter};
 
 use bitflags::bitflags;
@@ -517,6 +517,8 @@ pub struct VirtioSndPcmInfo {
 
     pub padding: [u8; 5],
 }
+
+const PCM_INFO_SIZE: usize = size_of::<VirtioSndPcmInfo>();
 
 impl Debug for VirtioSndPcmInfo {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
