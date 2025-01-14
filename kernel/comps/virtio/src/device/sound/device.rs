@@ -87,7 +87,7 @@ impl SoundDevice {
         // let cloned_device = device;
         // early_println!("Config is {:?}", soin.config_manager.read_config()); //Config is VirtioSoundConfig { jacks: 0, streams: 2, chmaps: 0, controls: 4294967295 }
         device.test_device_output();
-        device.test_device_input();
+        // device.test_device_input();
 
         aster_sound::register_device(DEVICE_NAME.to_string(), Arc::new(SpinLock::new(device)));
         Ok(())
