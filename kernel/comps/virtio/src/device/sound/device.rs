@@ -45,11 +45,11 @@ pub struct SoundDevice {
 
     set_up: bool,
 
-    token_rsp: BTreeMap<u16, Box<VirtioSndPcmStatus>>,
+    token_rsp: BTreeMap<u16, u16>,
 
     pcm_states: Vec<PCMState>,
 
-    token_buf: BTreeMap<u16, Vec<u8>>,
+    token_buf: BTreeMap<u16, u16>,
 }
 
 impl SoundDevice {
@@ -145,6 +145,7 @@ impl SoundDevice {
         test_device(device);     
         let device_lock = cloned_device.lock();
 
+        let device_lock = cloned_device.lock();
         // // Register irq callbacks
         let mut transport = device_lock
             .transport
@@ -153,7 +154,9 @@ impl SoundDevice {
         // // TODO: callbacks for microphone input
 
         transport.finish_init();
+        transport.finish_init();
 
+        drop(transport);
         drop(transport);
 
         Ok(())
@@ -588,20 +591,14 @@ impl SoundDevice {
             .write_once(&stream_id_bytes)
             .unwrap();
         let id_stream_slice = DmaStreamSlice::new(&id_stream, 0, 4);
-        // let frame_array: &[u8] = &frames[..period_size];
-        // self.send_buffer
-        //     .writer()
-        //     .unwrap()
-        //     .write_once(frame_array)
-        //     .unwrap();
         let mut reader = VmReader::from(frames);
         let mut writer = self.send_buffer.writer().unwrap();
         let len = writer.write(&mut reader);
         self.send_buffer.sync(0..len).unwrap();
-        
+
         let frame_slice = DmaStreamSlice::new(&self.send_buffer, 0, period_size);
         let inputs = vec![&id_stream_slice, &frame_slice];
-        let mut rsp = VirtioSndPcmStatus::new_zeroed();
+        let rsp = VirtioSndPcmStatus::new_zeroed();
         let rsp_slice = {
             let rsp_slice = DmaStreamSlice::new(&self.receive_buffer, 0, rsp.as_bytes().len());
             rsp_slice
@@ -612,9 +609,9 @@ impl SoundDevice {
             .expect("add tx queue failed");
         if queue.should_notify() {
             queue.notify();
-        } 
-        // self.token_buf.insert(token, inputs);
-        // self.token_rsp.insert(token, rsp);
+        }
+        self.token_buf.insert(token, token);
+        self.token_rsp.insert(token, token);
         Ok(token)
     }
 
@@ -773,6 +770,10 @@ fn test_device(device: Arc<Mutex<SoundDevice>>) {
     // match pcm_xfer_nb_result {
     //     Ok(token) => {
     //         early_println!("Token {:?} is returned", token);
+    // let pcm_xfer_nb_result = device.pcm_xfer_nb(STREAMID, &frames);
+    // match pcm_xfer_nb_result {
+    //     Ok(token) => {
+    //         early_println!("Token {:?} is returned", token);
     //     }
     //     Err(e) => {
     //         early_println!(
@@ -780,8 +781,23 @@ fn test_device(device: Arc<Mutex<SoundDevice>>) {
     //             STREAMID,
     //             e
     //         );
+    //         early_println!(
+    //             "Transfer pcm data in non-blokcing mode error for stream {:?} due to {:?}",
+    //             STREAMID,
+    //             e
+    //         );
     //     }
     // }
+
+    let pcm_xfer_result = device.pcm_xfer(STREAMID, &frames);
+    match pcm_xfer_result {
+        Ok(()) => {
+            early_println!("Transfer for stream {:?} completed!", STREAMID);
+        }
+        Err(e) => {
+            early_println!("Transfer for stream {:?} wrong due to {:?}!", STREAMID, e);
+        }
+    }
 
     let pcm_xfer_result = device.pcm_xfer(STREAMID, &frames);
     match pcm_xfer_result {
