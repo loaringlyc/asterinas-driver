@@ -600,12 +600,12 @@ impl SoundDevice {
             rsp_slice
         };
         let mut queue = self.tx_queue.disable_irq().lock();
-        let token = queue {token}
+        let token = queue
             .add_dma_buf(inputs.as_slice(), &mut [&rsp_slice])
             .expect("add tx queue failed");
         if queue.should_notify() {
             queue.notify();
-        } {token}
+        } 
         // self.token_buf.insert(token, inputs);
         // self.token_rsp.insert(token, rsp);
         Ok(token)
