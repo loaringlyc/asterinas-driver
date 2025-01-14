@@ -144,8 +144,6 @@ impl SoundDevice {
         let cloned_device = Arc::clone(&device);       
         test_device(device);     
         let device_lock = cloned_device.lock();
-
-        let device_lock = cloned_device.lock();
         // // Register irq callbacks
         let mut transport = device_lock
             .transport
@@ -154,9 +152,7 @@ impl SoundDevice {
         // // TODO: callbacks for microphone input
 
         transport.finish_init();
-        transport.finish_init();
 
-        drop(transport);
         drop(transport);
 
         Ok(())
