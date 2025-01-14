@@ -1,7 +1,7 @@
 use alloc::{
     boxed::Box, collections::btree_map::BTreeMap, string::ToString, sync::Arc, vec, vec::Vec,
 };
-use core::{array, hint::spin_loop, ops::RangeInclusive};
+use core::{array, hint::spin_loop, ops::{DerefMut, RangeInclusive}};
 
 // use core::slice;
 use aster_sound::{AnySoundDevice, SoundCallback};
@@ -41,7 +41,7 @@ pub struct SoundDevice {
     receive_buffer: DmaStream,
 
     pcm_infos: Option<Vec<VirtioSndPcmInfo>>,
-    // jack_infos: Option<Vec<VirtIOSndJackInfo>>,
+    
     chmap_infos: Option<Vec<VirtioSndChmapInfo>>,
 
     pcm_parameters: Vec<PcmParameters>,
@@ -58,80 +58,78 @@ pub struct SoundDevice {
 }
 
 impl AnySoundDevice for SoundDevice {
-    fn play(&mut self, data: &[u8]) {
-        // 检查设备是否已初始化
-        // if !self.set_up {
-        //     warn!("Sound device is not set up!");
-        //     return;
-        // }
+    // fn play(&mut self, data: &[u8]) {
+    //     // 检查设备是否已初始化
+    //     // if !self.set_up {
+    //     //     warn!("Sound device is not set up!");
+    //     //     return;
+    //     // }
 
-        // 获取输出流
-        let output_streams = match self.output_streams() {
-            Ok(streams) => streams,
-            Err(e) => {
-                error!("Failed to get output streams: {:?}", e);
-                return;
-            }
-        };
+    //     // 获取输出流
+    //     let output_streams = match self.output_streams() {
+    //         Ok(streams) => streams,
+    //         Err(e) => {
+    //             error!("Failed to get output streams: {:?}", e);
+    //             return;
+    //         }
+    //     };
 
-        // 如果没有输出流，直接返回
-        if output_streams.is_empty() {
-            warn!("No output streams available!");
-            return;
-        }
+    //     // 如果没有输出流，直接返回
+    //     if output_streams.is_empty() {
+    //         warn!("No output streams available!");
+    //         return;
+    //     }
 
-        // 这些需要吗????????????????????????????????????????????????????????
-        let stream_id = output_streams[0];
-        let params = PcmParameters::default();
-        if let Err(e) = self.pcm_set_params(
-            stream_id,
-            params.buffer_bytes,
-            params.period_bytes,
-            params.features,
-            params.channels,
-            params.format,
-            params.rate,
-        ) {
-            error!(
-                "Failed to set PCM parameters for stream {}: {:?}",
-                stream_id, e
-            );
-            return;
-        }
+    //     // 这些需要吗????????????????????????????????????????????????????????
+    //     let stream_id = output_streams[0];
+    //     let params = PcmParameters::default();
+    //     if let Err(e) = self.pcm_set_params(
+    //         stream_id,
+    //         params.buffer_bytes,
+    //         params.period_bytes,
+    //         params.features,
+    //         params.channels,
+    //         params.format,
+    //         params.rate,
+    //     ) {
+    //         error!(
+    //             "Failed to set PCM parameters for stream {}: {:?}",
+    //             stream_id, e
+    //         );
+    //         return;
+    //     }
 
-        early_println!("Set PCM params success!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-        if let Err(e) = self.pcm_prepare(stream_id) {
-            error!("Failed to preare stream {}: {:?}", stream_id, e);
-            return;
-        }
-        early_println!("PCM prepare!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-        if let Err(e) = self.pcm_start(stream_id) {
-            error!("Failed to start stream {}: {:?}", stream_id, e);
-            return;
-        }
-        //?????????????????????????????????????????????????????????????????????????
-        let mut tx_queue = self.tx_queue.disable_irq().lock();
-        let mut reader = VmReader::from(data);
-        while reader.remain() > 0 {
-            let mut writer = self.send_buffer.writer().unwrap();
-            let len = writer.write(&mut reader);
-            self.send_buffer.sync(0..len).unwrap();
-            let send_slice = DmaStreamSlice::new(&self.send_buffer, 0, data.len());
-            tx_queue.add_dma_buf(&[&send_slice], &[]).unwrap();
+    //     if let Err(e) = self.pcm_prepare(stream_id) {
+    //         error!("Failed to preare stream {}: {:?}", stream_id, e);
+    //         return;
+    //     }
+    //     if let Err(e) = self.pcm_start(stream_id) {
+    //         error!("Failed to start stream {}: {:?}", stream_id, e);
+    //         return;
+    //     }
+    //     //?????????????????????????????????????????????????????????????????????????
+    //     let mut tx_queue = self.tx_queue.disable_irq().lock();
+    //     let mut reader = VmReader::from(data);
+    //     while reader.remain() > 0 {
+    //         let mut writer = self.send_buffer.writer().unwrap();
+    //         let len = writer.write(&mut reader);
+    //         self.send_buffer.sync(0..len).unwrap();
+    //         let send_slice = DmaStreamSlice::new(&self.send_buffer, 0, data.len());
+    //         tx_queue.add_dma_buf(&[&send_slice], &[]).unwrap();
 
-            if tx_queue.should_notify() {
-                tx_queue.notify();
-            }
-            while !tx_queue.can_pop() {
-                spin_loop();
-            }
-            tx_queue.pop_used().unwrap();
-        }
-        // let callbacks = self.callbacks.read();
-        // for callback in callbacks.iter() {
-        //     callback(data);
-        // }
-    }
+    //         if tx_queue.should_notify() {
+    //             tx_queue.notify();
+    //         }
+    //         while !tx_queue.can_pop() {
+    //             spin_loop();
+    //         }
+    //         tx_queue.pop_used().unwrap();
+    //     }
+    //     // let callbacks = self.callbacks.read();
+    //     // for callback in callbacks.iter() {
+    //     //     callback(data);
+    //     // }
+    // }
 
     fn record(&mut self, buffer: &mut [u8]) {
         // 检查设备是否已初始化
@@ -278,7 +276,7 @@ impl SoundDevice {
             pcm_parameters.push(PcmParameters::default());
         }
 
-        let device = Arc::new(SoundDevice {
+        let mut device = SoundDevice {
             config_manager,
             transport: SpinLock::new(transport),
             control_queue,
@@ -296,13 +294,16 @@ impl SoundDevice {
             pcm_states: vec![],
             token_buf: BTreeMap::new(),
             callbacks: RwLock::new(Vec::new()),
-        });
+        };
         device.activate_receive_buffer(&mut device.event_queue.disable_irq().lock());
+        // let cloned_device = Arc::clone(&device);
+        device.test_device();
+        // let device_lock = cloned_device;
         // Register irq callbacks
         let mut transport = device.transport.disable_irq().lock();
         // TODO: callbacks for microphone input
         let handle_sound_input = {
-            let device = device.clone();
+            let device = Arc::new(device);
             move |_: &TrapFrame| device.handle_recv_irq()
         };
         const RECV0_QUEUE_INDEX: u16 = 0;
@@ -320,10 +321,12 @@ impl SoundDevice {
         );
         drop(transport);
 
-        aster_sound::register_device(DEVICE_NAME.to_string(), device);
+        aster_sound::register_device(DEVICE_NAME.to_string(), Arc::new(SpinLock::new(device)));
         Ok(())
     }
 
+
+    
     fn handle_recv_irq(&self) {
         let mut receive_queue = self.rx_queue.disable_irq().lock();
 
@@ -354,7 +357,7 @@ impl SoundDevice {
         early_println!("finish ask notify");
     }
 
-    fn request<Req: Pod>(&mut self, req: Req) -> Result<VirtioSndHdr, VirtioDeviceError> {
+    fn request<Req: Pod>(&self, req: Req) -> Result<VirtioSndHdr, VirtioDeviceError> {
         // 参数req表示一个request结构体，存放request信息，如VirtIOSndQueryInfo
         // 这里的Pod trait可以保证可转换为一连串bytes，然后就可以用len的到长度了
         let req_slice = {
@@ -414,7 +417,7 @@ impl SoundDevice {
     }
 
     fn pcm_info(
-        &mut self,
+        &self,
         stream_start_id: u32,
         stream_count: u32, // The number of streams that need to be queried
     ) -> Result<Vec<VirtioSndPcmInfo>, VirtioDeviceError> {
@@ -471,7 +474,7 @@ impl SoundDevice {
 
     /// Query information about the available chmaps.
     fn chmap_info(
-        &mut self,
+        &self,
         chmaps_start_id: u32,
         chmaps_count: u32,
     ) -> Result<Vec<VirtioSndChmapInfo>, VirtioDeviceError> {
@@ -917,6 +920,177 @@ impl SoundDevice {
         self.token_rsp.remove(&token);
         Ok(())
     }
+
+    fn test_device(&mut self) {
+        // let cloned_device = Arc::clone(&device);
+        // let mut device = cloned_device;
+        early_println!("Config is {:?}", self.config_manager.read_config()); //Config is VirtioSoundConfig { jacks: 0, streams: 2, chmaps: 0, controls: 4294967295 }
+        self.set_up().unwrap();
+        const STREAMID: u32 = 0;
+        const BUFFER_BYTES: u32 = 100;
+        const PERIOD_BYTES: u32 = 100;
+        const FEATURES: PcmFeatures = PcmFeatures::empty();
+        const CHANNELS: u8 = 1;
+        const FORMAT: PcmFormat = PcmFormat::U8;
+        const PCMRATE: PcmRate = PcmRate::Rate8000;
+    
+        // A PCM stream has the following command lifecycle:
+        //
+        // - `SET PARAMETERS`
+        //
+        //   The driver negotiates the stream parameters (format, transport, etc) with
+        //   the device.
+        //
+        //   Possible valid transitions: `SET PARAMETERS`, `PREPARE`.
+        //
+        // - `PREPARE`
+        //
+        //   The device prepares the stream (allocates resources, etc).
+        //
+        //   Possible valid transitions: `SET PARAMETERS`, `PREPARE`, `START`,
+        //   `RELEASE`.   Output only: the driver transfers data for pre-buffing.
+        //
+        // - `START`
+        //
+        //   The device starts the stream (unmute, putting into running state, etc).
+        //
+        //   Possible valid transitions: `STOP`.
+        //   The driver transfers data to/from the stream.
+        //
+        // - `STOP`
+        //
+        //   The device stops the stream (mute, putting into non-running state, etc).
+        //
+        //   Possible valid transitions: `START`, `RELEASE`.
+        //
+        // - `RELEASE`
+        //
+        //   The device releases the stream (frees resources, etc).
+        //
+        //   Possible valid transitions: `SET PARAMETERS`, `PREPARE`.
+        //
+        // ```text
+        // +---------------+ +---------+ +---------+ +-------+ +-------+
+        // | SetParameters | | Prepare | | Release | | Start | | Stop  |
+        // +---------------+ +---------+ +---------+ +-------+ +-------+
+        //         |              |           |          |         |
+        //         |-             |           |          |         |
+        //         ||             |           |          |         |
+        //         |<             |           |          |         |
+        //         |              |           |          |         |
+        //         |------------->|           |          |         |
+        //         |              |           |          |         |
+        //         |<-------------|           |          |         |
+        //         |              |           |          |         |
+        //         |              |-          |          |         |
+        //         |              ||          |          |         |
+        //         |              |<          |          |         |
+        //         |              |           |          |         |
+        //         |              |--------------------->|         |
+        //         |              |           |          |         |
+        //         |              |---------->|          |         |
+        //         |              |           |          |         |
+        //         |              |           |          |-------->|
+        //         |              |           |          |         |
+        //         |              |           |          |<--------|
+        //         |              |           |          |         |
+        //         |              |           |<-------------------|
+        //         |              |           |          |         |
+        //         |<-------------------------|          |         |
+        //         |              |           |          |         |
+        //         |              |<----------|          |         |
+        // ```
+        let set_params_result = self.pcm_set_params(
+            STREAMID,
+            BUFFER_BYTES,
+            PERIOD_BYTES,
+            FEATURES,
+            CHANNELS,
+            FORMAT,
+            PCMRATE,
+        );
+        let frames: [u8; 100] = [0; 100];
+        match set_params_result {
+            Ok(()) => {
+                early_println!("Set Parameters for stream {:?} completed!", STREAMID);
+            }
+            Err(e) => {
+                early_println!(
+                    "Set Parameters for stream {:?} wrong due to {:?}!",
+                    STREAMID,
+                    e
+                );
+            }
+        }
+    
+        let pcm_prepare_result = self.pcm_prepare(STREAMID);
+        match pcm_prepare_result {
+            Ok(()) => {
+                early_println!("Preparation for stream {:?} completed!", STREAMID);
+            }
+            Err(e) => {
+                early_println!(
+                    "Preparation for stream {:?} wrong due to {:?}!",
+                    STREAMID,
+                    e
+                );
+            }
+        }
+    
+        let pcm_start_result = self.pcm_start(STREAMID);
+        match pcm_start_result {
+            Ok(()) => {
+                early_println!("Start for stream {:?} completed!", STREAMID);
+            }
+            Err(e) => {
+                early_println!("Start for stream {:?} wrong due to {:?}!", STREAMID, e);
+            }
+        }
+    
+        let pcm_xfer_nb_result = self.pcm_xfer_nb(STREAMID, &frames);
+        match pcm_xfer_nb_result {
+            Ok(token) => {
+                early_println!("Token {:?} is returned", token);
+            }
+            Err(e) => {
+                early_println!(
+                    "Transfer pcm data in non-blokcing mode error for stream {:?} due to {:?}",
+                    STREAMID,
+                    e
+                );
+            }
+        }
+    
+        // let pcm_xfer_result = device.pcm_xfer(STREAMID, &frames);
+        // match pcm_xfer_result {
+        //     Ok(()) => {
+        //         early_println!("Transfer for stream {:?} completed!", STREAMID);
+        //     }
+        //     Err(e) => {
+        //         early_println!("Transfer for stream {:?} wrong due to {:?}!", STREAMID, e);
+        //     }
+        // }
+    
+        let pcm_stop_result = self.pcm_stop(STREAMID);
+        match pcm_stop_result {
+            Ok(()) => {
+                early_println!("Stop for stream {:?} completed!", STREAMID);
+            }
+            Err(e) => {
+                early_println!("Stop for stream {:?} wrong due to {:?}!", STREAMID, e);
+            }
+        }
+    
+        let pcm_release_result = self.pcm_release(STREAMID);
+        match pcm_release_result {
+            Ok(()) => {
+                early_println!("Release for stream {:?} completed!", STREAMID);
+            }
+            Err(e) => {
+                early_println!("Release for stream {:?} wrong due to {:?}!", STREAMID, e);
+            }
+        }
+    }
 }
 
 fn config_space_change(_: &TrapFrame) {
@@ -924,174 +1098,174 @@ fn config_space_change(_: &TrapFrame) {
     early_println!("Virtio-Sound device configuration space change")
 }
 
-/// test the freaking Virtio sound device
-fn test_device(device: Arc<Mutex<SoundDevice>>) {
-    let cloned_device = Arc::clone(&device);
-    let mut device = cloned_device.lock();
-    early_println!("Config is {:?}", device.config_manager.read_config()); //Config is VirtioSoundConfig { jacks: 0, streams: 2, chmaps: 0, controls: 4294967295 }
-    device.set_up().unwrap();
-    const STREAMID: u32 = 0;
-    const BUFFER_BYTES: u32 = 100;
-    const PERIOD_BYTES: u32 = 100;
-    const FEATURES: PcmFeatures = PcmFeatures::empty();
-    const CHANNELS: u8 = 1;
-    const FORMAT: PcmFormat = PcmFormat::U8;
-    const PCMRATE: PcmRate = PcmRate::Rate8000;
+// test the freaking Virtio sound device
+// fn test_device(&self) {
+//     let cloned_device = Arc::clone(&device);
+//     let mut device = cloned_device;
+//     early_println!("Config is {:?}", device.config_manager.read_config()); //Config is VirtioSoundConfig { jacks: 0, streams: 2, chmaps: 0, controls: 4294967295 }
+//     device.set_up().unwrap();
+//     const STREAMID: u32 = 0;
+//     const BUFFER_BYTES: u32 = 100;
+//     const PERIOD_BYTES: u32 = 100;
+//     const FEATURES: PcmFeatures = PcmFeatures::empty();
+//     const CHANNELS: u8 = 1;
+//     const FORMAT: PcmFormat = PcmFormat::U8;
+//     const PCMRATE: PcmRate = PcmRate::Rate8000;
 
-    // A PCM stream has the following command lifecycle:
-    //
-    // - `SET PARAMETERS`
-    //
-    //   The driver negotiates the stream parameters (format, transport, etc) with
-    //   the device.
-    //
-    //   Possible valid transitions: `SET PARAMETERS`, `PREPARE`.
-    //
-    // - `PREPARE`
-    //
-    //   The device prepares the stream (allocates resources, etc).
-    //
-    //   Possible valid transitions: `SET PARAMETERS`, `PREPARE`, `START`,
-    //   `RELEASE`.   Output only: the driver transfers data for pre-buffing.
-    //
-    // - `START`
-    //
-    //   The device starts the stream (unmute, putting into running state, etc).
-    //
-    //   Possible valid transitions: `STOP`.
-    //   The driver transfers data to/from the stream.
-    //
-    // - `STOP`
-    //
-    //   The device stops the stream (mute, putting into non-running state, etc).
-    //
-    //   Possible valid transitions: `START`, `RELEASE`.
-    //
-    // - `RELEASE`
-    //
-    //   The device releases the stream (frees resources, etc).
-    //
-    //   Possible valid transitions: `SET PARAMETERS`, `PREPARE`.
-    //
-    // ```text
-    // +---------------+ +---------+ +---------+ +-------+ +-------+
-    // | SetParameters | | Prepare | | Release | | Start | | Stop  |
-    // +---------------+ +---------+ +---------+ +-------+ +-------+
-    //         |              |           |          |         |
-    //         |-             |           |          |         |
-    //         ||             |           |          |         |
-    //         |<             |           |          |         |
-    //         |              |           |          |         |
-    //         |------------->|           |          |         |
-    //         |              |           |          |         |
-    //         |<-------------|           |          |         |
-    //         |              |           |          |         |
-    //         |              |-          |          |         |
-    //         |              ||          |          |         |
-    //         |              |<          |          |         |
-    //         |              |           |          |         |
-    //         |              |--------------------->|         |
-    //         |              |           |          |         |
-    //         |              |---------->|          |         |
-    //         |              |           |          |         |
-    //         |              |           |          |-------->|
-    //         |              |           |          |         |
-    //         |              |           |          |<--------|
-    //         |              |           |          |         |
-    //         |              |           |<-------------------|
-    //         |              |           |          |         |
-    //         |<-------------------------|          |         |
-    //         |              |           |          |         |
-    //         |              |<----------|          |         |
-    // ```
-    let set_params_result = device.pcm_set_params(
-        STREAMID,
-        BUFFER_BYTES,
-        PERIOD_BYTES,
-        FEATURES,
-        CHANNELS,
-        FORMAT,
-        PCMRATE,
-    );
-    let frames: [u8; 100] = [0; 100];
-    match set_params_result {
-        Ok(()) => {
-            early_println!("Set Parameters for stream {:?} completed!", STREAMID);
-        }
-        Err(e) => {
-            early_println!(
-                "Set Parameters for stream {:?} wrong due to {:?}!",
-                STREAMID,
-                e
-            );
-        }
-    }
+//     // A PCM stream has the following command lifecycle:
+//     //
+//     // - `SET PARAMETERS`
+//     //
+//     //   The driver negotiates the stream parameters (format, transport, etc) with
+//     //   the device.
+//     //
+//     //   Possible valid transitions: `SET PARAMETERS`, `PREPARE`.
+//     //
+//     // - `PREPARE`
+//     //
+//     //   The device prepares the stream (allocates resources, etc).
+//     //
+//     //   Possible valid transitions: `SET PARAMETERS`, `PREPARE`, `START`,
+//     //   `RELEASE`.   Output only: the driver transfers data for pre-buffing.
+//     //
+//     // - `START`
+//     //
+//     //   The device starts the stream (unmute, putting into running state, etc).
+//     //
+//     //   Possible valid transitions: `STOP`.
+//     //   The driver transfers data to/from the stream.
+//     //
+//     // - `STOP`
+//     //
+//     //   The device stops the stream (mute, putting into non-running state, etc).
+//     //
+//     //   Possible valid transitions: `START`, `RELEASE`.
+//     //
+//     // - `RELEASE`
+//     //
+//     //   The device releases the stream (frees resources, etc).
+//     //
+//     //   Possible valid transitions: `SET PARAMETERS`, `PREPARE`.
+//     //
+//     // ```text
+//     // +---------------+ +---------+ +---------+ +-------+ +-------+
+//     // | SetParameters | | Prepare | | Release | | Start | | Stop  |
+//     // +---------------+ +---------+ +---------+ +-------+ +-------+
+//     //         |              |           |          |         |
+//     //         |-             |           |          |         |
+//     //         ||             |           |          |         |
+//     //         |<             |           |          |         |
+//     //         |              |           |          |         |
+//     //         |------------->|           |          |         |
+//     //         |              |           |          |         |
+//     //         |<-------------|           |          |         |
+//     //         |              |           |          |         |
+//     //         |              |-          |          |         |
+//     //         |              ||          |          |         |
+//     //         |              |<          |          |         |
+//     //         |              |           |          |         |
+//     //         |              |--------------------->|         |
+//     //         |              |           |          |         |
+//     //         |              |---------->|          |         |
+//     //         |              |           |          |         |
+//     //         |              |           |          |-------->|
+//     //         |              |           |          |         |
+//     //         |              |           |          |<--------|
+//     //         |              |           |          |         |
+//     //         |              |           |<-------------------|
+//     //         |              |           |          |         |
+//     //         |<-------------------------|          |         |
+//     //         |              |           |          |         |
+//     //         |              |<----------|          |         |
+//     // ```
+//     let set_params_result = device.pcm_set_params(
+//         STREAMID,
+//         BUFFER_BYTES,
+//         PERIOD_BYTES,
+//         FEATURES,
+//         CHANNELS,
+//         FORMAT,
+//         PCMRATE,
+//     );
+//     let frames: [u8; 100] = [0; 100];
+//     match set_params_result {
+//         Ok(()) => {
+//             early_println!("Set Parameters for stream {:?} completed!", STREAMID);
+//         }
+//         Err(e) => {
+//             early_println!(
+//                 "Set Parameters for stream {:?} wrong due to {:?}!",
+//                 STREAMID,
+//                 e
+//             );
+//         }
+//     }
 
-    let pcm_prepare_result = device.pcm_prepare(STREAMID);
-    match pcm_prepare_result {
-        Ok(()) => {
-            early_println!("Preparation for stream {:?} completed!", STREAMID);
-        }
-        Err(e) => {
-            early_println!(
-                "Preparation for stream {:?} wrong due to {:?}!",
-                STREAMID,
-                e
-            );
-        }
-    }
+//     let pcm_prepare_result = device.pcm_prepare(STREAMID);
+//     match pcm_prepare_result {
+//         Ok(()) => {
+//             early_println!("Preparation for stream {:?} completed!", STREAMID);
+//         }
+//         Err(e) => {
+//             early_println!(
+//                 "Preparation for stream {:?} wrong due to {:?}!",
+//                 STREAMID,
+//                 e
+//             );
+//         }
+//     }
 
-    let pcm_start_result = device.pcm_start(STREAMID);
-    match pcm_start_result {
-        Ok(()) => {
-            early_println!("Start for stream {:?} completed!", STREAMID);
-        }
-        Err(e) => {
-            early_println!("Start for stream {:?} wrong due to {:?}!", STREAMID, e);
-        }
-    }
+//     let pcm_start_result = device.pcm_start(STREAMID);
+//     match pcm_start_result {
+//         Ok(()) => {
+//             early_println!("Start for stream {:?} completed!", STREAMID);
+//         }
+//         Err(e) => {
+//             early_println!("Start for stream {:?} wrong due to {:?}!", STREAMID, e);
+//         }
+//     }
 
-    let pcm_xfer_nb_result = device.pcm_xfer_nb(STREAMID, &frames);
-    match pcm_xfer_nb_result {
-        Ok(token) => {
-            early_println!("Token {:?} is returned", token);
-        }
-        Err(e) => {
-            early_println!(
-                "Transfer pcm data in non-blokcing mode error for stream {:?} due to {:?}",
-                STREAMID,
-                e
-            );
-        }
-    }
+//     let pcm_xfer_nb_result = device.pcm_xfer_nb(STREAMID, &frames);
+//     match pcm_xfer_nb_result {
+//         Ok(token) => {
+//             early_println!("Token {:?} is returned", token);
+//         }
+//         Err(e) => {
+//             early_println!(
+//                 "Transfer pcm data in non-blokcing mode error for stream {:?} due to {:?}",
+//                 STREAMID,
+//                 e
+//             );
+//         }
+//     }
 
-    // let pcm_xfer_result = device.pcm_xfer(STREAMID, &frames);
-    // match pcm_xfer_result {
-    //     Ok(()) => {
-    //         early_println!("Transfer for stream {:?} completed!", STREAMID);
-    //     }
-    //     Err(e) => {
-    //         early_println!("Transfer for stream {:?} wrong due to {:?}!", STREAMID, e);
-    //     }
-    // }
+//     // let pcm_xfer_result = device.pcm_xfer(STREAMID, &frames);
+//     // match pcm_xfer_result {
+//     //     Ok(()) => {
+//     //         early_println!("Transfer for stream {:?} completed!", STREAMID);
+//     //     }
+//     //     Err(e) => {
+//     //         early_println!("Transfer for stream {:?} wrong due to {:?}!", STREAMID, e);
+//     //     }
+//     // }
 
-    let pcm_stop_result = device.pcm_stop(STREAMID);
-    match pcm_stop_result {
-        Ok(()) => {
-            early_println!("Stop for stream {:?} completed!", STREAMID);
-        }
-        Err(e) => {
-            early_println!("Stop for stream {:?} wrong due to {:?}!", STREAMID, e);
-        }
-    }
+//     let pcm_stop_result = device.pcm_stop(STREAMID);
+//     match pcm_stop_result {
+//         Ok(()) => {
+//             early_println!("Stop for stream {:?} completed!", STREAMID);
+//         }
+//         Err(e) => {
+//             early_println!("Stop for stream {:?} wrong due to {:?}!", STREAMID, e);
+//         }
+//     }
 
-    let pcm_release_result = device.pcm_release(STREAMID);
-    match pcm_release_result {
-        Ok(()) => {
-            early_println!("Release for stream {:?} completed!", STREAMID);
-        }
-        Err(e) => {
-            early_println!("Release for stream {:?} wrong due to {:?}!", STREAMID, e);
-        }
-    }
-}
+//     let pcm_release_result = device.pcm_release(STREAMID);
+//     match pcm_release_result {
+//         Ok(()) => {
+//             early_println!("Release for stream {:?} completed!", STREAMID);
+//         }
+//         Err(e) => {
+//             early_println!("Release for stream {:?} wrong due to {:?}!", STREAMID, e);
+//         }
+//     }
+// }

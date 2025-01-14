@@ -165,6 +165,7 @@ type NetDeviceIrqHandlerListRef =
     Arc<SpinLock<Vec<Arc<dyn NetDeviceIrqHandler>>, LocalIrqDisabled>>;
 type NetworkDeviceRef = Arc<SpinLock<dyn AnyNetworkDevice, LocalIrqDisabled>>;
 
+// Arc<SpinLock<dyn AnyNetworkDevice, LocalIrqDisabled>>,
 struct Component {
     /// Device list, the key is device name, value is (callbacks, device);
     network_device_table: SpinLock<BTreeMap<String, NetworkDeviceIrqCallbackSet>, LocalIrqDisabled>,

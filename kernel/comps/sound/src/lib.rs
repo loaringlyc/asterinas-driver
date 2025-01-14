@@ -22,7 +22,7 @@ pub type SoundCallback = dyn Fn(VmReader<Infallible>) + Send + Sync;
 
 pub trait AnySoundDevice: Send + Sync + Any + Debug {
     /// 播放音频数据
-    fn play(&mut self, data: &[u8]);
+    // fn play(&mut self, data: &[u8]);
 
     /// 录制音频数据
     fn record(&mut self, buffer: &mut [u8]);
@@ -34,7 +34,7 @@ pub trait AnySoundDevice: Send + Sync + Any + Debug {
     fn register_callback(&self, callback: &'static SoundCallback);
 }
 
-pub fn register_device(name: String, device: Arc<dyn AnySoundDevice>) {
+pub fn register_device(name: String, device: Arc<SpinLock<dyn AnySoundDevice>>) {
     COMPONENT
         .get()
         .unwrap()
@@ -43,7 +43,7 @@ pub fn register_device(name: String, device: Arc<dyn AnySoundDevice>) {
         .insert(name, device);
 }
 
-pub fn all_devices() -> Vec<(String, Arc<dyn AnySoundDevice>)> {
+pub fn all_devices() -> Vec<(String, Arc<SpinLock<dyn AnySoundDevice>>)> {
     let audio_devs = COMPONENT.get().unwrap().audio_device_table.lock();
     audio_devs
         .iter()
@@ -62,7 +62,7 @@ fn component_init() -> Result<(), ComponentInitError> {
 
 #[derive(Debug)]
 struct Component {
-    audio_device_table: SpinLock<BTreeMap<String, Arc<dyn AnySoundDevice>>>,
+    audio_device_table: SpinLock<BTreeMap<String, Arc<SpinLock<dyn AnySoundDevice>>>>,
 }
 
 impl Component {
