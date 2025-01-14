@@ -1,12 +1,11 @@
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec, vec::Vec};
-use core::{array, hint::spin_loop, ptr::read};
+use core::{array, hint::spin_loop};
 
-use bytes::buf;
 use config::{SoundFeatures, VirtioSoundConfig};
 use log::{debug, error, info, warn};
 use ostd::{
     early_println,
-    mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmIo, VmReader, VmWriter},
+    mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmIo, VmReader},
     sync::{Mutex, SpinLock},
     Pod,
 };
@@ -141,16 +140,21 @@ impl SoundDevice {
             pcm_states: vec![],
             token_buf: BTreeMap::new(),
         }));
-
-        test_device(device);
+        
+        let cloned_device = Arc::clone(&device);       
+        test_device(device);     
+        let device_lock = cloned_device.lock();
 
         // // Register irq callbacks
-        // let mut transport = device.transport.disable_irq().lock();
+        let mut transport = device_lock
+            .transport
+            .disable_irq()
+            .lock();
         // // TODO: callbacks for microphone input
 
-        // transport.finish_init();
+        transport.finish_init();
 
-        // drop(transport);
+        drop(transport);
 
         Ok(())
     }
@@ -489,16 +493,18 @@ impl SoundDevice {
 
         loop {
             let mut queue = self.tx_queue.disable_irq().lock();
+            early_println!("queue has {:?} available descriptor", queue.available_desc());
             if queue.available_desc() >= 3 {
                 // 为什么是3？
                 if let Some(buffer) = remaining_buffers.next() {
+                    early_println!("buffer is {:?}", buffer);
                     let resp_slice = {
                         let resp_slice = DmaStreamSlice::new(&self.receive_buffer, 0, 8);
                         resp_slice
                     };
                     tokens[head] = {
                         // 为什么用unsafe
-                        //要用remain>0吗
+                        // 要用remain>0吗
                         let mut reader = VmReader::from(buffer);
                         let mut writer = self.send_buffer.writer().unwrap();
                         let len = writer.write(&mut reader);
@@ -531,6 +537,7 @@ impl SoundDevice {
                 }
             }
             if queue.can_pop() {
+                early_println!("tail is {:?}", tail);
                 // pop以后改变tail的值
                 queue.pop_used_with_token(tokens[tail])?;
                 if statuses[tail].status != u32::from(CommandCode::SOk) {
@@ -623,6 +630,15 @@ impl SoundDevice {
         self.token_buf.remove(&token);
         self.token_rsp.remove(&token);
         Ok(())
+    }
+
+    fn handle_recv_irq(&self) {
+        let mut eventq_lock = self.event_queue.disable_irq().lock();
+        let Ok((_, len)) = eventq_lock.pop_used() else {
+            return;
+        };
+        self.receive_buffer.sync(0..len as usize).unwrap();
+        
     }
 }
 
@@ -753,29 +769,29 @@ fn test_device(device: Arc<Mutex<SoundDevice>>) {
         }
     }
 
-    let pcm_xfer_nb_result = device.pcm_xfer_nb(STREAMID, &frames);
-    match pcm_xfer_nb_result {
-        Ok(u16token) => {
-            early_println!("Token {token} is returned {token}");
-        }
-        Err(e) => {
-            early_println!(
-                "Transfer pcm data in non-blokcing mode error for stream {:?} due to {:?}",
-                STREAMID,
-                e
-            );
-        }
-    }
-
-    // let pcm_xfer_result = device.pcm_xfer(STREAMID, &frames);
-    // match pcm_xfer_result {
-    //     Ok(()) => {
-    //         early_println!("Transfer for stream {:?} completed!", STREAMID);
+    // let pcm_xfer_nb_result = device.pcm_xfer_nb(STREAMID, &frames);
+    // match pcm_xfer_nb_result {
+    //     Ok(token) => {
+    //         early_println!("Token {:?} is returned", token);
     //     }
     //     Err(e) => {
-    //         early_println!("Transfer for stream {:?} wrong due to {:?}!", STREAMID, e);
+    //         early_println!(
+    //             "Transfer pcm data in non-blokcing mode error for stream {:?} due to {:?}",
+    //             STREAMID,
+    //             e
+    //         );
     //     }
     // }
+
+    let pcm_xfer_result = device.pcm_xfer(STREAMID, &frames);
+    match pcm_xfer_result {
+        Ok(()) => {
+            early_println!("Transfer for stream {:?} completed!", STREAMID);
+        }
+        Err(e) => {
+            early_println!("Transfer for stream {:?} wrong due to {:?}!", STREAMID, e);
+        }
+    }
 
     let pcm_stop_result = device.pcm_stop(STREAMID);
     match pcm_stop_result {
