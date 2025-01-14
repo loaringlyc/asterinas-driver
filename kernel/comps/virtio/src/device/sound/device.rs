@@ -546,7 +546,7 @@ impl SoundDevice {
                 if tail >= usize::from(Self::QUEUE_SIZE) {
                     tail = 0;
                 }
-            }
+            }   
             spin_loop();
         }
 
@@ -578,7 +578,7 @@ impl SoundDevice {
                 .zeroed(false)
                 .alloc_segment(1)
                 .unwrap();
-            DmaStream::map(segment.into(), DmaDirection::Bidirectional, false).unwrap()
+            DmaStream::map(segment.into(), DmaDirection::ToDevice, false).unwrap()
         };
         let stream_id_bytes = stream_id.to_le_bytes();
         id_stream
@@ -774,7 +774,7 @@ fn test_device(device: Arc<Mutex<SoundDevice>>) {
             );
         }
     }
-    
+
 
 
     // let pcm_xfer_result = device.pcm_xfer(STREAMID, &frames);
