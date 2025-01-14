@@ -1,11 +1,12 @@
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec, vec::Vec};
-use core::{array, hint::spin_loop};
+use core::{array, hint::spin_loop, ptr::read};
 
+use bytes::buf;
 use config::{SoundFeatures, VirtioSoundConfig};
 use log::{debug, error, info, warn};
 use ostd::{
     early_println,
-    mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmIo},
+    mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmIo, VmReader, VmWriter},
     sync::{Mutex, SpinLock},
     Pod,
 };
@@ -53,7 +54,7 @@ pub struct SoundDevice {
 }
 
 impl SoundDevice {
-    const QUEUE_SIZE: u16 = 2;
+    const QUEUE_SIZE: u16 = 16;
     pub fn negotiate_features(features: u64) -> u64 {
         let features = SoundFeatures::from_bits_truncate(features);
         // TODO: Implement negotiate!
@@ -113,7 +114,10 @@ impl SoundDevice {
             let segment = FrameAllocOptions::new().alloc_segment(1).unwrap();
             DmaStream::map(segment.into(), DmaDirection::FromDevice, false).unwrap()
         };
-        early_println!("The length of receive_buffer is {:?}",receive_buffer.nbytes());
+        early_println!(
+            "The length of receive_buffer is {:?}",
+            receive_buffer.nbytes()
+        );
 
         let mut pcm_parameters = vec![];
         for _ in 0..sound_config.streams {
@@ -161,8 +165,12 @@ impl SoundDevice {
             req_slice
         }; // 将req写入snd_req这个DmaStream
 
+        //TODO: for different request, give different buffer length
+        //      PcmInfo -> SND_HDR_SIZE + stream_size * PCM_INFO_SIZE
+
         let resp_slice = {
-            let resp_slice = DmaStreamSlice::new(&self.receive_buffer, 0, 9 * SND_HDR_SIZE);
+            let resp_slice =
+                DmaStreamSlice::new(&self.receive_buffer, 0, SND_HDR_SIZE + 2 * PCM_INFO_SIZE);
             resp_slice
         }; // 希望写入snd_resp这个DmaStream的前面 （目前只预留 返回一个最基础的OK或者ERR 的长度）
 
@@ -229,10 +237,9 @@ impl SoundDevice {
             count: stream_count,
             size: size_of::<VirtioSndPcmInfo>() as u32,
         })?; // call self.request to send the request and get the response
-        early_println!("A");
         if hdr != RequestStatusCode::Ok.into() {
             // if failed(not OK) then Error
-            early_println!("{:?}",hdr);
+            early_println!("{:?}", hdr);
             return Err(VirtioDeviceError::IoError);
         }
         // read struct VirtIOSndPcmInfo
@@ -467,26 +474,154 @@ impl SoundDevice {
         let mut head = 0;
         let mut tail = 0;
 
-        // loop {
-        //     let mut queue = self.tx_queue.disable_irq().lock();
-        //     if queue.available_desc() >= 3 { // 为什么是3？
-        //         if let Some(buffer) = remaining_buffers.next() {
-        //             tokens[head] = {  // 为什么用unsafe
-        //                 let pcm_slice = {
-        //                     let pcm_slice =
-        //                         DmaStreamSlice::new(self.send_buffer.clone(), 0, stream_id_bytes.len() + 1); // 一个u8一个byte
-        //                     pcm_slice.write_val(0, &1).unwrap();
-        //                     pcm_slice
-        //                 };
-        //                 queue.add_dma_buf(
-        //                     &[&pcm_slice],
-        //                     &mut [statuses[head].as_mut_bytes()],
-        //                 )
-        //             }
-        //         }
-        //     }
-        // }
+        let stream_id_stream = {
+            let segment = FrameAllocOptions::new()
+                .zeroed(false)
+                .alloc_segment(1)
+                .unwrap();
+            DmaStream::map(segment.into(), DmaDirection::ToDevice, false).unwrap()
+        };
+        stream_id_stream
+            .writer()
+            .unwrap()
+            .write_once(&stream_id_bytes)
+            .unwrap();
 
+        loop {
+            let mut queue = self.tx_queue.disable_irq().lock();
+            if queue.available_desc() >= 3 {
+                // 为什么是3？
+                if let Some(buffer) = remaining_buffers.next() {
+                    let resp_slice = {
+                        let resp_slice = DmaStreamSlice::new(&self.receive_buffer, 0, 8);
+                        resp_slice
+                    };
+                    tokens[head] = {
+                        // 为什么用unsafe
+                        //要用remain>0吗
+                        let mut reader = VmReader::from(buffer);
+                        let mut writer = self.send_buffer.writer().unwrap();
+                        let len = writer.write(&mut reader);
+                        self.send_buffer.sync(0..len).unwrap();
+
+                        let pcm_data_slice: DmaStreamSlice<&DmaStream> =
+                            DmaStreamSlice::new(&self.send_buffer, 0, len);
+
+                        let device_id_slice = DmaStreamSlice::new(&stream_id_stream, 0, 4);
+                        let inputs = vec![&device_id_slice, &pcm_data_slice]; //为什么需要两个分开？能并一起传吗
+
+                        queue
+                            .add_dma_buf(inputs.as_slice(), &mut [&resp_slice])
+                            .unwrap()
+                    };
+                    // read from resp_slice
+                    resp_slice.sync().unwrap();
+                    statuses[head] = resp_slice.read_val(0).unwrap();
+                    if queue.should_notify() {
+                        queue.notify();
+                    }
+                    buffers[head] = Some(buffer);
+                    head += 1;
+                    if head >= usize::from(Self::QUEUE_SIZE) {
+                        head = 0;
+                    }
+                } else if head == tail {
+                    //都已经使用过，tail追赶上head
+                    break;
+                }
+            }
+            if queue.can_pop() {
+                // pop以后改变tail的值
+                queue.pop_used_with_token(tokens[tail])?;
+                if statuses[tail].status != u32::from(CommandCode::SOk) {
+                    return Err(VirtioDeviceError::IoError);
+                }
+                tail += 1;
+                if tail >= usize::from(Self::QUEUE_SIZE) {
+                    tail = 0;
+                }
+            }
+            spin_loop();
+        }
+
+        Ok(())
+    }
+
+    /// Transfer PCM frame to device, based on the stream type(OUTPUT/INPUT).
+    ///
+    /// Currently supports only output stream.
+    ///
+    /// This is a non-blocking method that returns a token.
+    ///
+    /// The length of the `frames` must be equal to the buffer size set for the stream corresponding to the `stream_id`.
+    pub fn pcm_xfer_nb(&mut self, stream_id: u32, frames: &[u8]) -> Result<u16, VirtioDeviceError> {
+        const U32_SIZE: usize = size_of::<u32>();
+        if !self.set_up {
+            self.set_up()?;
+            self.set_up = true;
+        }
+        if !self.pcm_parameters[stream_id as usize].setup {
+            warn!("Please set parameters for a stream before using it!");
+            return Err(VirtioDeviceError::IoError);
+        }
+        let period_size: usize = self.pcm_parameters[stream_id as usize].period_bytes as usize;
+        assert_eq!(period_size, frames.len());
+
+        let id_stream = {
+            let segment = FrameAllocOptions::new()
+                .zeroed(false)
+                .alloc_segment(1)
+                .unwrap();
+            DmaStream::map(segment.into(), DmaDirection::Bidirectional, false).unwrap()
+        };
+        let stream_id_bytes = stream_id.to_le_bytes();
+        id_stream
+            .writer()
+            .unwrap()
+            .write_once(&stream_id_bytes)
+            .unwrap();
+        let id_stream_slice = DmaStreamSlice::new(&id_stream, 0, 4);
+        // let frame_array: &[u8] = &frames[..period_size];
+        // self.send_buffer
+        //     .writer()
+        //     .unwrap()
+        //     .write_once(frame_array)
+        //     .unwrap();
+        let mut reader = VmReader::from(frames);
+        let mut writer = self.send_buffer.writer().unwrap();
+        let len = writer.write(&mut reader);
+        self.send_buffer.sync(0..len).unwrap();
+        
+        let frame_slice = DmaStreamSlice::new(&self.send_buffer, 0, period_size);
+        let inputs = vec![&id_stream_slice, &frame_slice];
+        let mut rsp = VirtioSndPcmStatus::new_zeroed();
+        let rsp_slice = {
+            let rsp_slice = DmaStreamSlice::new(&self.receive_buffer, 0, rsp.as_bytes().len());
+            rsp_slice
+        };
+        let mut queue = self.tx_queue.disable_irq().lock();
+        let token = queue
+            .add_dma_buf(inputs.as_slice(), &mut [&rsp_slice])
+            .expect("add tx queue failed");
+        if queue.should_notify() {
+            queue.notify();
+        } 
+        // self.token_buf.insert(token, inputs);
+        // self.token_rsp.insert(token, rsp);
+        Ok(token)
+    }
+
+    /// The PCM frame transmission corresponding to the given token has been completed.
+    pub fn pcm_xfer_ok(&mut self, token: u16) -> Result<(), VirtioDeviceError> {
+        assert!(self.token_buf.contains_key(&token));
+        assert!(self.token_rsp.contains_key(&token));
+        let mut queue = self.tx_queue.disable_irq().lock();
+        queue
+            .pop_used_with_token(token)
+            .expect("pop used failed during pcm transfer ack");
+
+        self.token_buf.remove(&token);
+        self.token_rsp.remove(&token);
         Ok(())
     }
 }
@@ -496,5 +631,169 @@ fn test_device(device: Arc<Mutex<SoundDevice>>) {
     let cloned_device = Arc::clone(&device);
     let mut device = cloned_device.lock();
     early_println!("Config is {:?}", device.config_manager.read_config()); //Config is VirtioSoundConfig { jacks: 0, streams: 2, chmaps: 0, controls: 4294967295 }
-    device.set_up();
+    device.set_up().unwrap();
+    const STREAMID: u32 = 0;
+    const BUFFER_BYTES: u32 = 100;
+    const PERIOD_BYTES: u32 = 100;
+    const FEATURES: PcmFeatures = PcmFeatures::empty();
+    const CHANNELS: u8 = 1;
+    const FORMAT: PcmFormat = PcmFormat::U8;
+    const PCMRATE: PcmRate = PcmRate::Rate8000;
+
+    // A PCM stream has the following command lifecycle:
+    //
+    // - `SET PARAMETERS`
+    //
+    //   The driver negotiates the stream parameters (format, transport, etc) with
+    //   the device.
+    //
+    //   Possible valid transitions: `SET PARAMETERS`, `PREPARE`.
+    //
+    // - `PREPARE`
+    //
+    //   The device prepares the stream (allocates resources, etc).
+    //
+    //   Possible valid transitions: `SET PARAMETERS`, `PREPARE`, `START`,
+    //   `RELEASE`.   Output only: the driver transfers data for pre-buffing.
+    //
+    // - `START`
+    //
+    //   The device starts the stream (unmute, putting into running state, etc).
+    //
+    //   Possible valid transitions: `STOP`.
+    //   The driver transfers data to/from the stream.
+    //
+    // - `STOP`
+    //
+    //   The device stops the stream (mute, putting into non-running state, etc).
+    //
+    //   Possible valid transitions: `START`, `RELEASE`.
+    //
+    // - `RELEASE`
+    //
+    //   The device releases the stream (frees resources, etc).
+    //
+    //   Possible valid transitions: `SET PARAMETERS`, `PREPARE`.
+    //
+    // ```text
+    // +---------------+ +---------+ +---------+ +-------+ +-------+
+    // | SetParameters | | Prepare | | Release | | Start | | Stop  |
+    // +---------------+ +---------+ +---------+ +-------+ +-------+
+    //         |              |           |          |         |
+    //         |-             |           |          |         |
+    //         ||             |           |          |         |
+    //         |<             |           |          |         |
+    //         |              |           |          |         |
+    //         |------------->|           |          |         |
+    //         |              |           |          |         |
+    //         |<-------------|           |          |         |
+    //         |              |           |          |         |
+    //         |              |-          |          |         |
+    //         |              ||          |          |         |
+    //         |              |<          |          |         |
+    //         |              |           |          |         |
+    //         |              |--------------------->|         |
+    //         |              |           |          |         |
+    //         |              |---------->|          |         |
+    //         |              |           |          |         |
+    //         |              |           |          |-------->|
+    //         |              |           |          |         |
+    //         |              |           |          |<--------|
+    //         |              |           |          |         |
+    //         |              |           |<-------------------|
+    //         |              |           |          |         |
+    //         |<-------------------------|          |         |
+    //         |              |           |          |         |
+    //         |              |<----------|          |         |
+    // ```
+    let set_params_result = device.pcm_set_params(
+        STREAMID,
+        BUFFER_BYTES,
+        PERIOD_BYTES,
+        FEATURES,
+        CHANNELS,
+        FORMAT,
+        PCMRATE,
+    );
+    let frames: [u8; 100] = [0; 100];
+    match set_params_result {
+        Ok(()) => {
+            early_println!("Set Parameters for stream {:?} completed!", STREAMID);
+        }
+        Err(e) => {
+            early_println!(
+                "Set Parameters for stream {:?} wrong due to {:?}!",
+                STREAMID,
+                e
+            );
+        }
+    }
+
+    let pcm_prepare_result = device.pcm_prepare(STREAMID);
+    match pcm_prepare_result {
+        Ok(()) => {
+            early_println!("Preparation for stream {:?} completed!", STREAMID);
+        }
+        Err(e) => {
+            early_println!(
+                "Preparation for stream {:?} wrong due to {:?}!",
+                STREAMID,
+                e
+            );
+        }
+    }
+
+    let pcm_start_result = device.pcm_start(STREAMID);
+    match pcm_start_result {
+        Ok(()) => {
+            early_println!("Start for stream {:?} completed!", STREAMID);
+        }
+        Err(e) => {
+            early_println!("Start for stream {:?} wrong due to {:?}!", STREAMID, e);
+        }
+    }
+
+    let pcm_xfer_nb_result = device.pcm_xfer_nb(STREAMID, &frames);
+    match pcm_xfer_nb_result {
+        Ok(u16token) => {
+            early_println!("Token {token} is returned {token}");
+        }
+        Err(e) => {
+            early_println!(
+                "Transfer pcm data in non-blokcing mode error for stream {:?} due to {:?}",
+                STREAMID,
+                e
+            );
+        }
+    }
+
+    // let pcm_xfer_result = device.pcm_xfer(STREAMID, &frames);
+    // match pcm_xfer_result {
+    //     Ok(()) => {
+    //         early_println!("Transfer for stream {:?} completed!", STREAMID);
+    //     }
+    //     Err(e) => {
+    //         early_println!("Transfer for stream {:?} wrong due to {:?}!", STREAMID, e);
+    //     }
+    // }
+
+    let pcm_stop_result = device.pcm_stop(STREAMID);
+    match pcm_stop_result {
+        Ok(()) => {
+            early_println!("Stop for stream {:?} completed!", STREAMID);
+        }
+        Err(e) => {
+            early_println!("Stop for stream {:?} wrong due to {:?}!", STREAMID, e);
+        }
+    }
+
+    let pcm_release_result = device.pcm_release(STREAMID);
+    match pcm_release_result {
+        Ok(()) => {
+            early_println!("Release for stream {:?} completed!", STREAMID);
+        }
+        Err(e) => {
+            early_println!("Release for stream {:?} wrong due to {:?}!", STREAMID, e);
+        }
+    }
 }
