@@ -21,14 +21,6 @@ use spin::Once;
 pub type SoundCallback = dyn Fn(VmReader<Infallible>) + Send + Sync;
 
 pub trait AnySoundDevice: Send + Sync + Any + Debug {
-    /// 播放音频数据
-    // fn play(&mut self, data: &[u8]);
-
-    /// 录制音频数据
-    fn record(&mut self, buffer: &mut [u8]);
-
-    /// 注册播放回调
-    // fn register_playback_callback(&self, callback: &'static SoundCallback);
 
     /// 注册录制回调
     fn register_callback(&self, callback: &'static SoundCallback);
