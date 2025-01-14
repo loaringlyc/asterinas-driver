@@ -13,10 +13,10 @@ use core::any::Any;
 use component::{init_component, ComponentInitError};
 use ostd::{
     // mm::{Infallible, VmReader},
-    mm::{Infallible, VmReader}, sync::SpinLock
+    mm::{Infallible, VmReader},
+    sync::SpinLock,
 };
 use spin::Once;
-
 
 pub type SoundCallback = dyn Fn(VmReader<Infallible>) + Send + Sync;
 
@@ -44,11 +44,7 @@ pub fn register_device(name: String, device: Arc<dyn AnySoundDevice>) {
 }
 
 pub fn all_devices() -> Vec<(String, Arc<dyn AnySoundDevice>)> {
-    let audio_devs = COMPONENT
-        .get()
-        .unwrap()
-        .audio_device_table
-        .lock();
+    let audio_devs = COMPONENT.get().unwrap().audio_device_table.lock();
     audio_devs
         .iter()
         .map(|(name, device)| (name.clone(), device.clone()))

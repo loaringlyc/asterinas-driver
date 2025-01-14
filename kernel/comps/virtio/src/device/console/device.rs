@@ -2,10 +2,11 @@
 
 use alloc::{boxed::Box, fmt::Debug, string::ToString, sync::Arc, vec::Vec};
 use core::hint::spin_loop;
-use ostd::early_println;
+
 use aster_console::{AnyConsoleDevice, ConsoleCallback};
 use log::debug;
 use ostd::{
+    early_println,
     mm::{DmaDirection, DmaStream, DmaStreamSlice, FrameAllocOptions, VmReader},
     sync::{LocalIrqDisabled, RwLock, SpinLock},
     trap::TrapFrame,
