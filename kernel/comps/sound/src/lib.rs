@@ -29,6 +29,7 @@ pub trait AnySoundDevice: Send + Sync + Any + Debug {
 
     /// 注册播放回调
     // fn register_playback_callback(&self, callback: &'static SoundCallback);
+    fn test_device(&mut self);
 
     /// 注册录制回调
     fn register_callback(&self, callback: &'static SoundCallback);
@@ -50,6 +51,7 @@ pub fn all_devices() -> Vec<(String, Arc<SpinLock<dyn AnySoundDevice>>)> {
         .map(|(name, device)| (name.clone(), device.clone()))
         .collect()
 }
+
 
 static COMPONENT: Once<Component> = Once::new();
 

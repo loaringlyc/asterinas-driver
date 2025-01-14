@@ -9,6 +9,7 @@ mod shm;
 pub mod tty;
 mod urandom;
 mod zero;
+mod sound;
 
 cfg_if! {
     if #[cfg(all(target_arch = "x86_64", feature = "cvm_guest"))] {
@@ -41,6 +42,8 @@ pub fn init() -> Result<()> {
     add_node(console, "console")?;
     let tty = Arc::new(tty::TtyDevice);
     add_node(tty, "tty")?;
+    let sound=Arc::new(sound::Sound);
+    add_node(sound, "sound")?;
     cfg_if! {
         if #[cfg(all(target_arch = "x86_64", feature = "cvm_guest"))] {
             let tdx_guest = Arc::new(tdxguest::TdxGuest);
@@ -78,6 +81,7 @@ pub fn get_device(dev: usize) -> Result<Arc<dyn Device>> {
         (5, 0) => Ok(Arc::new(tty::TtyDevice)),
         (1, 8) => Ok(Arc::new(random::Random)),
         (1, 9) => Ok(Arc::new(urandom::Urandom)),
+        (6,6)=>Ok(Arc::new(sound::Sound)),
         _ => return_errno_with_message!(Errno::EINVAL, "unsupported device"),
     }
 }

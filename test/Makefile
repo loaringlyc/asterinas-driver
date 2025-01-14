@@ -26,6 +26,7 @@ INITRAMFS_ALL_DIRS := \
 	$(INITRAMFS)/lib64 \
 	$(INITRAMFS)/bin \
 	$(INITRAMFS)/sbin \
+	$(INITRAMFS)/usr \
 	$(INITRAMFS)/usr/bin \
 	$(INITRAMFS)/usr/local \
 	$(INITRAMFS)/test \
@@ -95,6 +96,10 @@ $(INITRAMFS)/sbin:
 	@cp /sbin/ldconfig $@
 	@cp /sbin/ldconfig.real $@
 
+$(INITRAMFS)/usr:
+	@mkdir -p $@
+	@cp $(CUR_DIR)/user_test $@
+
 $(INITRAMFS)/usr/bin: | $(INITRAMFS)/bin
 	@mkdir -p $@
 	@cp /usr/bin/busybox $@
@@ -104,6 +109,7 @@ $(INITRAMFS)/usr/local:
 	@cp -r /usr/local/nginx $@
 	@cp -r /usr/local/redis $@
 	@cp -r /usr/local/memcached $@
+	
 
 .PHONY: $(INITRAMFS)/test
 $(INITRAMFS)/test:
