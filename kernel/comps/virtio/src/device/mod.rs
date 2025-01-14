@@ -55,6 +55,7 @@ pub enum VirtioDeviceError {
     BufferOverflow,
     /// Invalid parameter.
     InvalidParam,
+    DmaError,
 }
 
 impl From<QueueError> for VirtioDeviceError {

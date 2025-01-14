@@ -7,6 +7,7 @@ use core::fmt::{self, Display, Formatter};
 use alloc::fmt::Debug;
 use bitflags::bitflags;
 use ostd::Pod;
+use typeflags_util::False;
 // jack control request types
 pub const VIRTIO_SND_R_JACK_INFO: u32 = 1;
 pub const VIRTIO_SND_R_JACK_REMAP: u32 = 2;
@@ -699,7 +700,7 @@ impl Display for VirtioSndChmapInfo {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq,Default)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PcmParameters {
     setup: bool,
     buffer_bytes: u32,
@@ -708,6 +709,20 @@ pub struct PcmParameters {
     channels: u8,
     format: PcmFormat,
     rate: PcmRate,
+}
+
+impl Default for PcmParameters {
+    fn default() -> Self {
+        PcmParameters{
+            setup: false,
+            buffer_bytes: 4096,
+            period_bytes: 1024,
+            features: PcmFeatures::empty(),
+            channels: 2,
+            format: PcmFormat::S16,
+            rate: PcmRate::Rate16000
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

@@ -20,6 +20,7 @@ members = [
     "kernel/comps/logger",
     "kernel/comps/time",
     "kernel/comps/virtio",
+    "kernel/comps/sound",
     "kernel/libs/cpio-decoder",
     "kernel/libs/int-to-c-enum",
     "kernel/libs/int-to-c-enum/derive",

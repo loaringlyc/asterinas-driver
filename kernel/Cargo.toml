@@ -17,6 +17,7 @@ aster-logger = { path = "comps/logger" }
 aster-time = { path = "comps/time" }
 aster-virtio = { path = "comps/virtio" }
 aster-rights = { path = "libs/aster-rights" }
+aster-sound = {path = "comps/sound"}
 component = { path = "libs/comp-sys/component" }
 controlled = { path = "libs/comp-sys/controlled" }
 ostd = { path = "../ostd" }

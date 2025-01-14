@@ -2,7 +2,7 @@
 
 use alloc::{boxed::Box, fmt::Debug, string::ToString, sync::Arc, vec::Vec};
 use core::hint::spin_loop;
-
+use ostd::early_println;
 use aster_console::{AnyConsoleDevice, ConsoleCallback};
 use log::debug;
 use ostd::{
@@ -157,7 +157,6 @@ impl ConsoleDevice {
             // <https://lore.kernel.org/qemu-devel/20240707111940.232549-3-lrh2000@pku.edu.cn/T/#u>.
             .add_dma_buf(&[], &[&DmaStreamSlice::new(&self.receive_buffer, 0, 1)])
             .unwrap();
-
         if receive_queue.should_notify() {
             receive_queue.notify();
         }
