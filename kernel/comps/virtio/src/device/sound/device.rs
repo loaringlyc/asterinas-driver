@@ -660,7 +660,7 @@ impl SoundDevice {
         early_println!("Config is {:?}", self.sound_inner.config_manager.read_config()); //Config is VirtioSoundConfig { jacks: 0, streams: 2, chmaps: 0, controls: 4294967295 }
         self.set_up().unwrap();
         const STREAMID: u32 = 0;
-        const BUFFER_BYTES: u32 = 100;
+        const BUFFER_BYTES: u32 = 80000;
         const PERIOD_BYTES: u32 = 100;
         const FEATURES: PcmFeatures = PcmFeatures::empty();
         const CHANNELS: u8 = 1;
@@ -742,7 +742,6 @@ impl SoundDevice {
             FORMAT,
             PCMRATE,
         );
-        let frames: [u8; 100] = [0; 100];
         match set_params_result {
             Ok(()) => {
                 early_println!("Set Parameters for stream {:?} completed!", STREAMID);
@@ -780,29 +779,29 @@ impl SoundDevice {
             }
         }
     
-        let pcm_xfer_nb_result = self.pcm_xfer_nb(STREAMID, &frames);
-        match pcm_xfer_nb_result {
-            Ok(token) => {
-                early_println!("Token {:?} is returned", token);
-            }
-            Err(e) => {
-                early_println!(
-                    "Transfer pcm data in non-blokcing mode error for stream {:?} due to {:?}",
-                    STREAMID,
-                    e
-                );
-            }
-        }
-    
-        // let pcm_xfer_result = device.pcm_xfer(STREAMID, &frames);
-        // match pcm_xfer_result {
-        //     Ok(()) => {
-        //         early_println!("Transfer for stream {:?} completed!", STREAMID);
+        // let pcm_xfer_nb_result = self.pcm_xfer_nb(STREAMID, &frames);
+        // match pcm_xfer_nb_result {
+        //     Ok(token) => {
+        //         early_println!("Token {:?} is returned", token);
         //     }
         //     Err(e) => {
-        //         early_println!("Transfer for stream {:?} wrong due to {:?}!", STREAMID, e);
+        //         early_println!(
+        //             "Transfer pcm data in non-blokcing mode error for stream {:?} due to {:?}",
+        //             STREAMID,
+        //             e
+        //         );
         //     }
         // }
+    
+        let pcm_xfer_result = self.pcm_xfer(STREAMID, &test_frames::TEST_FRAMES_A4);
+        match pcm_xfer_result {
+            Ok(()) => {
+                early_println!("Transfer for stream {:?} completed!", STREAMID);
+            }
+            Err(e) => {
+                early_println!("Transfer for stream {:?} wrong due to {:?}!", STREAMID, e);
+            }
+        }
     
         let pcm_stop_result = self.pcm_stop(STREAMID);
         match pcm_stop_result {

@@ -83,7 +83,7 @@ QEMU_ARGS="\
     -device virtio-net-pci,netdev=net01,disable-legacy=on,disable-modern=off$VIRTIO_NET_FEATURES$IOMMU_DEV_EXTRA \
     -device virtio-serial-pci,disable-legacy=on,disable-modern=off$IOMMU_DEV_EXTRA \
     -device virtconsole,chardev=mux \
-    -device virtio-sound-pci,audiodev=my_audiodev -audiodev dbus,id=my_audiodev \
+    -device virtio-sound-pci,audiodev=my_audiodev -audiodev wav,id=my_audiodev \
     $IOMMU_EXTRA_ARGS \
 "
 

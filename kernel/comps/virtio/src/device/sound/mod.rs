@@ -1,5 +1,6 @@
 pub mod config;
 pub mod device;
+pub mod test_frames;
 
 pub static DEVICE_NAME: &str = "Virtio-Sound";
 
