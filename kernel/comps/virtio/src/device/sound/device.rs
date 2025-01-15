@@ -6,6 +6,11 @@ use core::{
     hint::spin_loop,
     ops::{DerefMut, RangeInclusive},
 };
+use core::{
+    array,
+    hint::spin_loop,
+    ops::{DerefMut, RangeInclusive},
+};
 
 // use core::slice;
 use aster_sound::{AnySoundDevice, SoundCallback};
@@ -28,9 +33,11 @@ use crate::{
 };
 
 pub struct SoundDevice {
+pub struct SoundDevice {
     sound_inner: Arc<SoundDeviceInner>,
 
     pcm_infos: Option<Vec<VirtioSndPcmInfo>>,
+
 
     chmap_infos: Option<Vec<VirtioSndChmapInfo>>,
 
@@ -46,6 +53,7 @@ pub struct SoundDevice {
 }
 
 impl Debug for SoundDevice {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SoundDevice")
             .field("sound_inner", &self.sound_inner)
@@ -69,11 +77,11 @@ impl SoundDevice {
     const QUEUE_SIZE: u16 = 16;
     pub fn init(transport: Box<dyn VirtioTransport>) -> Result<(), VirtioDeviceError> {
         let sound_inner = SoundDeviceInner::set(transport).unwrap();
+        let sound_inner = SoundDeviceInner::set(transport).unwrap();
         let mut pcm_parameters = vec![]; // ?????????????????????????
         for _ in 0..sound_inner.config_manager.read_config().streams {
             pcm_parameters.push(PcmParameters::default());
         }
-        let soin = sound_inner.clone();
 
         let mut device = SoundDevice {
             sound_inner,
@@ -87,8 +95,8 @@ impl SoundDevice {
         };
         // let cloned_device = device;
         // early_println!("Config is {:?}", soin.config_manager.read_config()); //Config is VirtioSoundConfig { jacks: 0, streams: 2, chmaps: 0, controls: 4294967295 }
-        device.test_device();
-        // let device_lock = cloned_device;
+        device.test_device_output();
+        // device.test_device_input();
 
         aster_sound::register_device(DEVICE_NAME.to_string(), Arc::new(SpinLock::new(device)));
         Ok(())
@@ -100,12 +108,16 @@ impl SoundDevice {
         let req_slice = {
             let req_slice =
                 DmaStreamSlice::new(&self.sound_inner.send_buffer, 0, req.as_bytes().len());
+            let req_slice =
+                DmaStreamSlice::new(&self.sound_inner.send_buffer, 0, req.as_bytes().len());
             req_slice.write_val(0, &req).unwrap();
             req_slice.sync().unwrap();
             req_slice
         }; // 将req写入snd_req这个DmaStream
 
         let resp_slice = {
+            let resp_slice =
+                DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, 20 * SND_HDR_SIZE);
             let resp_slice =
                 DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, 20 * SND_HDR_SIZE);
             resp_slice
@@ -138,6 +150,9 @@ impl SoundDevice {
         self.pcm_infos = Some(pcm_infos);
 
         // init chmap info
+        if let Ok(chmap_infos) =
+            self.chmap_info(0, self.sound_inner.config_manager.read_config().chmaps)
+        {
         if let Ok(chmap_infos) =
             self.chmap_info(0, self.sound_inner.config_manager.read_config().chmaps)
         {
@@ -530,11 +545,18 @@ impl SoundDevice {
             //     "queue has {:?} available descriptor",
             //     queue.available_desc()
             // );
+            // early_println!(
+            //     "queue has {:?} available descriptor",
+            //     queue.available_desc()
+            // );
             if queue.available_desc() >= 3 {
                 // 为什么是3？
                 if let Some(buffer) = remaining_buffers.next() {
                     // early_println!("buffer is {:?}", buffer);
+                    // early_println!("buffer is {:?}", buffer);
                     let resp_slice = {
+                        let resp_slice =
+                            DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, 8);
                         let resp_slice =
                             DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, 8);
                         resp_slice
@@ -574,6 +596,7 @@ impl SoundDevice {
                 }
             }
             if queue.can_pop() {
+                // early_println!("tail is {:?}", tail);
                 // early_println!("tail is {:?}", tail);
                 // pop以后改变tail的值
                 queue.pop_used_with_token(tokens[tail])?;
@@ -636,6 +659,8 @@ impl SoundDevice {
         let rsp_slice = {
             let rsp_slice =
                 DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, rsp.as_bytes().len());
+            let rsp_slice =
+                DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, rsp.as_bytes().len());
             rsp_slice
         };
         let mut queue = self.sound_inner.tx_queue.disable_irq().lock();
@@ -679,6 +704,7 @@ impl SoundDevice {
         const CHANNELS: u8 = 1;
         const FORMAT: PcmFormat = PcmFormat::U8;
         const PCMRATE: PcmRate = PcmRate::Rate8000;
+
 
         // A PCM stream has the following command lifecycle:
         //
@@ -768,6 +794,7 @@ impl SoundDevice {
             }
         }
 
+
         let pcm_prepare_result = self.pcm_prepare(STREAMID);
         match pcm_prepare_result {
             Ok(()) => {
@@ -781,6 +808,7 @@ impl SoundDevice {
                 );
             }
         }
+
 
         let pcm_start_result = self.pcm_start(STREAMID);
         match pcm_start_result {
@@ -803,6 +831,7 @@ impl SoundDevice {
             }
         }
 
+
         let pcm_stop_result = self.pcm_stop(STREAMID);
         match pcm_stop_result {
             Ok(()) => {
@@ -813,6 +842,7 @@ impl SoundDevice {
             }
         }
 
+
         let pcm_release_result = self.pcm_release(STREAMID);
         match pcm_release_result {
             Ok(()) => {
@@ -822,6 +852,53 @@ impl SoundDevice {
                 early_println!("Release for stream {:?} wrong due to {:?}!", STREAMID, e);
             }
         }
+    }
+
+    // Test input function for virtio-sound device
+    fn test_device_input(&mut self) {
+        early_println!(
+            "Config is {:?}",
+            self.sound_inner.config_manager.read_config()
+        ); //Config is VirtioSoundConfig { jacks: 0, streams: 2, chmaps: 0, controls: 4294967295 }
+        self.set_up().unwrap();
+        const STREAMID: u32 = 1;
+        const BUFFER_BYTES: u32 = 80000;
+        const PERIOD_BYTES: u32 = 100;
+        const FEATURES: PcmFeatures = PcmFeatures::empty();
+        const CHANNELS: u8 = 1;
+        const FORMAT: PcmFormat = PcmFormat::U8;
+        const PCMRATE: PcmRate = PcmRate::Rate8000;
+
+        let set_params_result = self.pcm_set_params(
+            STREAMID,
+            BUFFER_BYTES,
+            PERIOD_BYTES,
+            FEATURES,
+            CHANNELS,
+            FORMAT,
+            PCMRATE,
+        );
+        match set_params_result {
+            Ok(()) => {
+                early_println!("Set Parameters for stream {:?} completed!", STREAMID);
+            }
+            Err(e) => {
+                early_println!(
+                    "Set Parameters for stream {:?} wrong due to {:?}!",
+                    STREAMID,
+                    e
+                );
+            }
+        }
+
+        early_println!("Entering recording mode!");
+
+        let mut buffer = vec![0u8; BUFFER_BYTES as usize];
+        while buffer.iter().all(|&b| b == 0) {
+            spin_loop();
+        }
+
+        early_println!("Recording test completed.");
     }
 }
 pub struct SoundDeviceInner {
@@ -836,8 +913,6 @@ pub struct SoundDeviceInner {
     event_queue: SpinLock<VirtQueue>,
     tx_queue: SpinLock<VirtQueue>,
     rx_queue: SpinLock<VirtQueue>,
-
-    event_buffer: DmaStream,
     send_buffer: DmaStream,
     receive_buffer: DmaStream,
 
@@ -845,68 +920,14 @@ pub struct SoundDeviceInner {
 }
 
 impl AnySoundDevice for SoundDevice {
-    fn record(&mut self, buffer: &mut [u8]) {
-        // 检查设备是否已初始化
-        if !self.set_up {
-            warn!("Sound device is not set up!");
-            return;
-        }
-
-        // 获取输入流
-        let input_streams = match self.input_streams() {
-            Ok(streams) => streams,
-            Err(e) => {
-                error!("Failed to get input streams: {:?}", e);
-                return;
-            }
-        };
-
-        if input_streams.is_empty() {
-            warn!("No input streams available!");
-            return;
-        }
-
-        // 获取输入流 ID（假设使用第一个输入流
-        let stream_id = input_streams[0];
-        let buffer_len = buffer.len();
-        let mut rx_queue = self.sound_inner.rx_queue.disable_irq().lock();
-        let mut writer = VmWriter::from(&mut *buffer);
-        while writer.avail() > 0 {
-            let mut reader = self.sound_inner.receive_buffer.reader().unwrap();
-            let len = reader.read(&mut writer);
-            self.sound_inner.receive_buffer.sync(0..len).unwrap();
-            let receive_slice =
-                DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, buffer_len);
-            rx_queue.add_dma_buf(&[], &[&receive_slice]).unwrap();
-
-            if rx_queue.should_notify() {
-                rx_queue.notify();
-            }
-
-            // 等待数据接收完成
-            while !rx_queue.can_pop() {
-                spin_loop();
-            }
-
-            // 清理已使用的缓冲区
-            rx_queue.pop_used().unwrap();
-        }
-
-        
-        // let callbacks = self.callbacks.read();
-        // for callback in callbacks.iter() {
-        //     callback(buffer);
-        // }
-    }
-
-    fn test_device(&mut self) {
-        self.test_device();
-    }
-
     // fn register_playback_callback(&self, callback: &'static SoundCallback) {
     //     let mut callbacks = self.callbacks.write();
     //     callbacks.push(callback);
     // }
+
+    fn test_device(&mut self) {
+        self.test_device();
+    }
 
     fn register_callback(&self, callback: &'static SoundCallback) {
         let mut callbacks = self.sound_inner.callbacks.write();
@@ -923,7 +944,6 @@ impl Debug for SoundDeviceInner {
             .field("event_queue", &self.event_queue)
             .field("tx_queue", &self.tx_queue)
             .field("rx_queue", &self.rx_queue)
-            .field("event_buffer", &self.event_buffer)
             .field("send_buffer", &self.send_buffer)
             .field("receive_buffer", &self.receive_buffer)
             .finish()
@@ -949,18 +969,10 @@ impl SoundDeviceInner {
         let control_queue = SpinLock::new(
             VirtQueue::new(CONTROLQ_INDEX, Self::QUEUE_SIZE, transport.as_mut()).unwrap(),
         );
-        let event_queue = SpinLock::new(
-            VirtQueue::new(EVENTQ_INDEX, Self::QUEUE_SIZE, transport.as_mut()).unwrap(),
-        );
         let tx_queue =
             SpinLock::new(VirtQueue::new(TXQ_INDEX, Self::QUEUE_SIZE, transport.as_mut()).unwrap());
         let rx_queue =
             SpinLock::new(VirtQueue::new(RXQ_INDEX, Self::QUEUE_SIZE, transport.as_mut()).unwrap());
-
-        let event_buffer = {
-            let segment = FrameAllocOptions::new().alloc_segment(1).unwrap();
-            DmaStream::map(segment.into(), DmaDirection::FromDevice, false).unwrap()
-        };
         let send_buffer = {
             let segment = FrameAllocOptions::new().alloc_segment(1).unwrap();
             DmaStream::map(segment.into(), DmaDirection::ToDevice, false).unwrap()
@@ -978,7 +990,6 @@ impl SoundDeviceInner {
             event_queue,
             tx_queue,
             rx_queue,
-            event_buffer,
             send_buffer,
             receive_buffer,
             callbacks: RwLock::new(Vec::new()),
@@ -1010,6 +1021,32 @@ impl SoundDeviceInner {
         Ok(device)
     }
 
+    fn record(&self, buffer: &mut [u8]) {
+        let buffer_len = buffer.len();
+        let mut rx_queue = self.rx_queue.disable_irq().lock();
+        let mut writer = VmWriter::from(&mut *buffer);
+        while writer.avail() > 0 {
+            let mut reader = self.receive_buffer.reader().unwrap();
+            let len = reader.read(&mut writer);
+            self.receive_buffer.sync(0..len).unwrap();
+            let receive_slice = DmaStreamSlice::new(&self.receive_buffer, 0, buffer_len); // It should be noted that the length value contains the size of the virtio_snd_pcm_status structure plus the size of the recorded frames.
+            rx_queue.add_dma_buf(&[], &[&receive_slice]).unwrap();
+
+            if rx_queue.should_notify() {
+                rx_queue.notify();
+            }
+
+            // 等待数据接收完成
+            while !rx_queue.can_pop() {
+                spin_loop();
+            }
+
+            // 清理已使用的缓冲区
+            rx_queue.pop_used().unwrap();
+        }
+        early_println!("The input stream buffer is {:?}", buffer);
+    }
+
     fn handle_recv_irq(&self) {
         let mut receive_queue = self.rx_queue.disable_irq().lock();
 
@@ -1017,6 +1054,9 @@ impl SoundDeviceInner {
             return;
         };
         self.receive_buffer.sync(0..len as usize).unwrap();
+
+        let mut buffer = vec![0u8; len as usize];
+        self.record(&mut buffer);
 
         let callbacks = self.callbacks.read();
         for callback in callbacks.iter() {
@@ -1030,7 +1070,7 @@ impl SoundDeviceInner {
 
     fn activate_receive_buffer(&self, rec_queue: &mut VirtQueue) {
         rec_queue
-            .add_dma_buf(&[], &[&DmaStreamSlice::new(&self.event_buffer, 0, 1)])
+            .add_dma_buf(&[], &[&DmaStreamSlice::new(&self.receive_buffer, 0, 1)])
             .unwrap();
         early_println!("{:?}", rec_queue);
         if rec_queue.should_notify() {
