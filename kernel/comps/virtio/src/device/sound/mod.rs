@@ -9,7 +9,6 @@ use core::fmt::{self, Display, Formatter};
 
 use bitflags::bitflags;
 use ostd::Pod;
-use typeflags_util::False;
 // jack control request types
 pub const VIRTIO_SND_R_JACK_INFO: u32 = 1;
 pub const VIRTIO_SND_R_JACK_REMAP: u32 = 2;

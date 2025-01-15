@@ -29,7 +29,7 @@ impl Device for Sound {
 }
 
 impl Pollable for Sound {
-    fn poll(&self, mask: IoEvents, poller: Option<&mut PollHandle>) -> IoEvents {
+    fn poll(&self, mask: IoEvents, _: Option<&mut PollHandle>) -> IoEvents {
         let events = IoEvents::IN | IoEvents::OUT;
         events & mask
     }

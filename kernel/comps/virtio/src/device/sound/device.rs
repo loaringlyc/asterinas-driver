@@ -4,7 +4,7 @@ use alloc::{
 use core::{
     array,
     hint::spin_loop,
-    ops::{DerefMut, RangeInclusive},
+    ops::RangeInclusive,
 };
 
 // use core::slice;
@@ -63,18 +63,23 @@ impl Debug for SoundDevice {
 
 impl SoundDevice {
     pub fn negotiate_features(features: u64) -> u64 {
-        let features = SoundFeatures::from_bits_truncate(features);
+        let mut features = SoundFeatures::from_bits_truncate(features);
         // TODO: Implement negotiate!
+        features.remove(SoundFeatures::VIRTIO_SND_F_CTLS);
         features.bits()
     }
     const QUEUE_SIZE: u16 = 16;
     pub fn init(transport: Box<dyn VirtioTransport>) -> Result<(), VirtioDeviceError> {
+        // set up sound inner configuration
         let sound_inner = SoundDeviceInner::set(transport).unwrap();
-        let mut pcm_parameters = vec![]; // ?????????????????????????
-        for _ in 0..sound_inner.config_manager.read_config().streams {
+
+        // set parameters 
+        let mut pcm_parameters = vec![]; 
+        for _ in 0..sound_inner.config_manager.read_config(false).streams {
             pcm_parameters.push(PcmParameters::default());
         }
 
+        // initialize device
         let mut device = SoundDevice {
             sound_inner,
             pcm_infos: None,
@@ -100,16 +105,12 @@ impl SoundDevice {
         let req_slice = {
             let req_slice =
                 DmaStreamSlice::new(&self.sound_inner.send_buffer, 0, req.as_bytes().len());
-            let req_slice =
-                DmaStreamSlice::new(&self.sound_inner.send_buffer, 0, req.as_bytes().len());
             req_slice.write_val(0, &req).unwrap();
             req_slice.sync().unwrap();
             req_slice
         }; // 将req写入snd_req这个DmaStream
 
         let resp_slice = {
-            let resp_slice =
-                DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, 20 * SND_HDR_SIZE);
             let resp_slice =
                 DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, 20 * SND_HDR_SIZE);
             resp_slice
@@ -135,7 +136,7 @@ impl SoundDevice {
 
     fn set_up(&mut self) -> Result<(), VirtioDeviceError> {
         // init pcm info
-        let pcm_infos = self.pcm_info(0, self.sound_inner.config_manager.read_config().streams)?;
+        let pcm_infos = self.pcm_info(0, self.sound_inner.config_manager.read_config(false).streams)?;
         for pcm_info in &pcm_infos {
             info!("[sound device] pcm_info: {}", pcm_info);
         }
@@ -143,7 +144,7 @@ impl SoundDevice {
 
         // init chmap info
         if let Ok(chmap_infos) =
-            self.chmap_info(0, self.sound_inner.config_manager.read_config().chmaps)
+            self.chmap_info(0, self.sound_inner.config_manager.read_config(false).chmaps)
         {
             for chmap_info in &chmap_infos {
                 info!("[sound device] chmap_info: {}", chmap_info);
@@ -155,7 +156,7 @@ impl SoundDevice {
         }
 
         // set pcm state to default
-        for _ in 0..self.sound_inner.config_manager.read_config().streams {
+        for _ in 0..self.sound_inner.config_manager.read_config(false).streams {
             self.pcm_states.push(PCMState::default());
         }
         Ok(())
@@ -167,7 +168,7 @@ impl SoundDevice {
         stream_count: u32, // The number of streams that need to be queried
     ) -> Result<Vec<VirtioSndPcmInfo>, VirtioDeviceError> {
         // Check if stream_dart_id+stream_comnt exceeds the number of streams supported by the device. If exceeded, return an error.
-        if stream_start_id + stream_count > self.sound_inner.config_manager.read_config().streams {
+        if stream_start_id + stream_count > self.sound_inner.config_manager.read_config(false).streams {
             error!("stream_start_id + stream_count > streams! There are not enough streams to be queried!");
             return Err(VirtioDeviceError::IoError);
         }
@@ -224,7 +225,7 @@ impl SoundDevice {
         chmaps_count: u32,
     ) -> Result<Vec<VirtioSndChmapInfo>, VirtioDeviceError> {
         //
-        if chmaps_start_id + chmaps_count > self.sound_inner.config_manager.read_config().streams {
+        if chmaps_start_id + chmaps_count > self.sound_inner.config_manager.read_config(false).streams {
             error!("chmaps_start_id + chmaps_count > self.chmaps");
             return Err(VirtioDeviceError::IoError);
         }
@@ -546,8 +547,6 @@ impl SoundDevice {
                     let resp_slice = {
                         let resp_slice =
                             DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, 8);
-                        let resp_slice =
-                            DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, 8);
                         resp_slice
                     };
                     tokens[head] = {
@@ -648,8 +647,6 @@ impl SoundDevice {
         let rsp_slice = {
             let rsp_slice =
                 DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, rsp.as_bytes().len());
-            let rsp_slice =
-                DmaStreamSlice::new(&self.sound_inner.receive_buffer, 0, rsp.as_bytes().len());
             rsp_slice
         };
         let mut queue = self.sound_inner.tx_queue.disable_irq().lock();
@@ -678,12 +675,13 @@ impl SoundDevice {
         Ok(())
     }
 
+    // test the pcm related ability of device
     fn test_device(&mut self) {
         // let cloned_device = Arc::clone(&device);
         // let mut device = cloned_device;
         early_println!(
             "Config is {:?}",
-            self.sound_inner.config_manager.read_config()
+            self.sound_inner.config_manager.read_config(false)
         ); //Config is VirtioSoundConfig { jacks: 0, streams: 2, chmaps: 0, controls: 4294967295 }
         self.set_up().unwrap();
         const STREAMID: u32 = 0;
@@ -847,7 +845,7 @@ impl SoundDevice {
     fn test_device_input(&mut self) {
         early_println!(
             "Config is {:?}",
-            self.sound_inner.config_manager.read_config()
+            self.sound_inner.config_manager.read_config(false)
         ); //Config is VirtioSoundConfig { jacks: 0, streams: 2, chmaps: 0, controls: 4294967295 }
         self.set_up().unwrap();
         const STREAMID: u32 = 1;
@@ -882,7 +880,7 @@ impl SoundDevice {
 
         early_println!("Entering recording mode!");
 
-        let mut buffer = vec![0u8; BUFFER_BYTES as usize];
+        let buffer = vec![0u8; BUFFER_BYTES as usize];
         while buffer.iter().all(|&b| b == 0) {
             spin_loop();
         }
@@ -927,7 +925,7 @@ impl AnySoundDevice for SoundDevice {
 impl Debug for SoundDeviceInner {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SoundDeviceInner")
-            .field("config", &self.config_manager.read_config())
+            .field("config", &self.config_manager.read_config(false))
             .field("transport", &self.transport)
             .field("control_queue", &self.control_queue)
             .field("event_queue", &self.event_queue)
@@ -944,7 +942,7 @@ impl SoundDeviceInner {
     pub fn set(mut transport: Box<dyn VirtioTransport>) -> Result<Arc<Self>, VirtioDeviceError> {
         let config_manager = VirtioSoundConfig::new_manager(transport.as_ref());
 
-        let sound_config = config_manager.read_config();
+        let sound_config = config_manager.read_config(false);
 
         early_println!(
             "Load virtio-sound successfully. Config = {:?}",

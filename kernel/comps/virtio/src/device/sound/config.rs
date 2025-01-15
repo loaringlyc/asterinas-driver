@@ -31,7 +31,7 @@ impl VirtioSoundConfig {
 }
 
 impl ConfigManager<VirtioSoundConfig> {
-    pub(super) fn read_config(&self) -> VirtioSoundConfig {
+    pub(super) fn read_config(&self, ctls_negotiated: bool) -> VirtioSoundConfig {
         let mut sound_config = VirtioSoundConfig::new_uninit();
         sound_config.jacks = self
             .read_once::<u32>(offset_of!(VirtioSoundConfig, jacks))
@@ -42,13 +42,13 @@ impl ConfigManager<VirtioSoundConfig> {
         sound_config.chmaps = self
             .read_once::<u32>(offset_of!(VirtioSoundConfig, chmaps))
             .unwrap_or(0);
-        // if ctls_negotiated {
-        //     sound_config.controls = self
-        //         .read_once::<u32>(offset_of!(VirtioSoundConfig, controls))
-        //         .unwrap_or(0);
-        // } else {
-        //     sound_config.controls = 0;
-        // }
+        if ctls_negotiated {
+            sound_config.controls = self
+                .read_once::<u32>(offset_of!(VirtioSoundConfig, controls))
+                .unwrap_or(0);
+        } else {
+            sound_config.controls = 0;
+        }
         sound_config
     }
 }
