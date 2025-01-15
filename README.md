@@ -1,4 +1,4 @@
-# Implementing Virtio-gpu for Asterinas
+# Implementing Virtio-sound for Asterinas
 
 ## Getting Started
 
@@ -35,24 +35,25 @@ docker run -it --privileged --network=host --device=/dev/kvm -v $(pwd)/asterinas
 
 ### 3. Inside the container, go to the project folder to build and run Asterinas.
 
+Fist install alsa sound backend using commands:
+```bash
+apt update
+apt install alsa-utils alsa-base libasound2
+```
+
+The start the operating system by:
 ```bash
 make build
 make run
 ```
 
-If everything goes well, Asterinas is now up and running inside a VM.
+If everything goes well, Asterinas is now up and running inside a VM and a .wav file has been generated.
 
-## Git 
-
-Here are some git instructions:
-
+You could generate audio by using:
 ```bash
-git remote -v
-git commit -m "your informtion"
-git push -u origin main
-
-git pull origin main:main
+cat dev/snd
 ```
+in the container. This will modify the generated .wav file by adding newly-generated audio to its end.
 
 ## The Book
 
