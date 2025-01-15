@@ -574,7 +574,7 @@ impl SoundDevice {
                 }
             }
             if queue.can_pop() {
-                early_println!("tail is {:?}", tail);
+                // early_println!("tail is {:?}", tail);
                 // pop以后改变tail的值
                 queue.pop_used_with_token(tokens[tail])?;
                 if statuses[tail].status != u32::from(CommandCode::SOk) {
@@ -792,19 +792,6 @@ impl SoundDevice {
             }
         }
 
-        // let pcm_xfer_nb_result = self.pcm_xfer_nb(STREAMID, &frames);
-        // match pcm_xfer_nb_result {
-        //     Ok(token) => {
-        //         early_println!("Token {:?} is returned", token);
-        //     }
-        //     Err(e) => {
-        //         early_println!(
-        //             "Transfer pcm data in non-blokcing mode error for stream {:?} due to {:?}",
-        //             STREAMID,
-        //             e
-        //         );
-        //     }
-        // }
 
         let pcm_xfer_result = self.pcm_xfer(STREAMID, &test_frames::TEST_FRAMES_A4);
         match pcm_xfer_result {
@@ -912,7 +899,9 @@ impl AnySoundDevice for SoundDevice {
         // }
     }
 
-    fn test_device(&mut self) {}
+    fn test_device(&mut self) {
+        self.test_device();
+    }
 
     // fn register_playback_callback(&self, callback: &'static SoundCallback) {
     //     let mut callbacks = self.callbacks.write();
