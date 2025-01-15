@@ -33,7 +33,6 @@ use crate::{
 };
 
 pub struct SoundDevice {
-pub struct SoundDevice {
     sound_inner: Arc<SoundDeviceInner>,
 
     pcm_infos: Option<Vec<VirtioSndPcmInfo>>,
@@ -53,7 +52,6 @@ pub struct SoundDevice {
 }
 
 impl Debug for SoundDevice {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SoundDevice")
             .field("sound_inner", &self.sound_inner)
@@ -150,9 +148,6 @@ impl SoundDevice {
         self.pcm_infos = Some(pcm_infos);
 
         // init chmap info
-        if let Ok(chmap_infos) =
-            self.chmap_info(0, self.sound_inner.config_manager.read_config().chmaps)
-        {
         if let Ok(chmap_infos) =
             self.chmap_info(0, self.sound_inner.config_manager.read_config().chmaps)
         {
@@ -901,6 +896,7 @@ impl SoundDevice {
         early_println!("Recording test completed.");
     }
 }
+
 pub struct SoundDeviceInner {
     config_manager: ConfigManager<VirtioSoundConfig>,
     transport: SpinLock<Box<dyn VirtioTransport>>,
