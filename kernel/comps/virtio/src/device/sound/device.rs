@@ -6,11 +6,6 @@ use core::{
     hint::spin_loop,
     ops::{DerefMut, RangeInclusive},
 };
-use core::{
-    array,
-    hint::spin_loop,
-    ops::{DerefMut, RangeInclusive},
-};
 
 // use core::slice;
 use aster_sound::{AnySoundDevice, SoundCallback};
@@ -75,7 +70,6 @@ impl SoundDevice {
     const QUEUE_SIZE: u16 = 16;
     pub fn init(transport: Box<dyn VirtioTransport>) -> Result<(), VirtioDeviceError> {
         let sound_inner = SoundDeviceInner::set(transport).unwrap();
-        let sound_inner = SoundDeviceInner::set(transport).unwrap();
         let mut pcm_parameters = vec![]; // ?????????????????????????
         for _ in 0..sound_inner.config_manager.read_config().streams {
             pcm_parameters.push(PcmParameters::default());
@@ -93,7 +87,7 @@ impl SoundDevice {
         };
         // let cloned_device = device;
         // early_println!("Config is {:?}", soin.config_manager.read_config()); //Config is VirtioSoundConfig { jacks: 0, streams: 2, chmaps: 0, controls: 4294967295 }
-        device.test_device_output();
+        device.test_device();
         // device.test_device_input();
 
         aster_sound::register_device(DEVICE_NAME.to_string(), Arc::new(SpinLock::new(device)));
@@ -911,7 +905,6 @@ pub struct SoundDeviceInner {
     rx_queue: SpinLock<VirtQueue>,
     send_buffer: DmaStream,
     receive_buffer: DmaStream,
-
     callbacks: RwLock<Vec<&'static SoundCallback>, LocalIrqDisabled>,
 }
 
@@ -964,6 +957,9 @@ impl SoundDeviceInner {
         const RXQ_INDEX: u16 = 3;
         let control_queue = SpinLock::new(
             VirtQueue::new(CONTROLQ_INDEX, Self::QUEUE_SIZE, transport.as_mut()).unwrap(),
+        );
+        let event_queue = SpinLock::new(
+            VirtQueue::new(EVENTQ_INDEX, Self::QUEUE_SIZE, transport.as_mut()).unwrap(),
         );
         let tx_queue =
             SpinLock::new(VirtQueue::new(TXQ_INDEX, Self::QUEUE_SIZE, transport.as_mut()).unwrap());
